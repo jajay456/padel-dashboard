@@ -42,6 +42,18 @@ export default function App() {
   const [filters, setFilters] = useState<Filters | null>(null)
   const [dark, setDark] = useState(false)
 
+  // 🟢 เพิ่มตรงนี้: ดักจับและเตะหน้าจอออกจาก LINE In-App Browser ไปเปิดที่ Safari/Chrome ทันที
+  useEffect(() => {
+    const ua = navigator.userAgent || navigator.vendor || (window as any).opera;
+    if (ua.indexOf('Line') > -1) {
+      const currentUrl = window.location.href;
+      if (currentUrl.indexOf('openExternalBrowser=1') === -1) {
+        const separator = currentUrl.indexOf('?') !== -1 ? '&' : '?';
+        window.location.href = currentUrl + separator + 'openExternalBrowser=1';
+      }
+    }
+  }, []);
+
   useEffect(() => {
     document.documentElement.classList.toggle('dark', dark)
   }, [dark])
@@ -167,6 +179,7 @@ export default function App() {
     return <LoginPage onSuccess={setAccessToken} onError={setError} />
   }
 
+  // ส่วนของการ Render หน้าตา UI ด้านล่างคงเดิมทั้งหมด...
   if (authState === 'checking') {
     return (
       <div className="loading-overlay">
