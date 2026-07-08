@@ -64,7 +64,7 @@ export default function App() {
           setAuthState('unauthorized')
         }
       })
-      .catch((e) => {
+      .catch(() => {
         if (!cancelled) setAuthState('error')
       })
 
