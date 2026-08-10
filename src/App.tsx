@@ -9,10 +9,11 @@ import DayOfWeekChart from './components/DayOfWeekChart'
 import DataTable from './components/DataTable'
 import RawDataTable from './components/RawDataTable'
 import LoginPage from './components/LoginPage'
-import { parseSheetRows, applyFilters, aggregateByDay, aggregateByZone, aggregateByClub, aggregateByDayOfWeek, getKPIs, getUniqueValues, aggregateByDayPerKey } from './utils/dataProcessing'
+import { parseSheetRows, dedupeRows, applyFilters, aggregateByDay, aggregateByZone, aggregateByClub, aggregateByDayOfWeek, getKPIs, getUniqueValues, aggregateByDayPerKey } from './utils/dataProcessing'
 import { loadGoogleSheet, getSheetTabs } from './utils/loadGoogleSheet'
 import { openSheetPicker } from './utils/loadPicker'
 import { getUserEmail, checkAuthorization } from './utils/checkAuthorization'
+import { saveSheetUpload, getAllUploadRows, deleteUploadsByDate, getUploadedSheets, deleteUploadsBySheet, type UploadedSheet } from './utils/saveUpload'
 import type { Filters, RawRow } from './types'
 import logoFull from './assets/Logo_full.png'
 import logoLight from './assets/Logo_light.png'
@@ -41,6 +42,22 @@ export default function App() {
   const [error, setError] = useState('')
   const [filters, setFilters] = useState<Filters | null>(null)
   const [dark, setDark] = useState(false)
+  const [dataSource, setDataSource] = useState<'sheet' | 'firebase' | null>(null)
+  const [fbLoading, setFbLoading] = useState(false)
+  const [fbError, setFbError] = useState('')
+
+  const [delYear, setDelYear] = useState(String(new Date().getFullYear()))
+  const [delMonth, setDelMonth] = useState('')
+  const [delDay, setDelDay] = useState('')
+  const [delLoading, setDelLoading] = useState(false)
+  const [delMessage, setDelMessage] = useState('')
+  const [delError, setDelError] = useState('')
+
+  const [uploadedSheets, setUploadedSheets] = useState<UploadedSheet[]>([])
+  const [delSheetId, setDelSheetId] = useState('')
+  const [delSheetLoading, setDelSheetLoading] = useState(false)
+  const [delSheetMessage, setDelSheetMessage] = useState('')
+  const [delSheetError, setDelSheetError] = useState('')
 
   // 🟢 เพิ่มตรงนี้: ดักจับและเตะหน้าจอออกจาก LINE In-App Browser ไปเปิดที่ Safari/Chrome ทันที
   useEffect(() => {
@@ -83,6 +100,15 @@ export default function App() {
     return () => { cancelled = true }
   }, [accessToken])
 
+  useEffect(() => {
+    if (authState !== 'authorized') return
+    let cancelled = false
+    getUploadedSheets()
+      .then(list => { if (!cancelled) setUploadedSheets(list) })
+      .catch(e => console.error('Failed to load uploaded sheet list', e))
+    return () => { cancelled = true }
+  }, [authState])
+
   async function handlePickSheet() {
     if (!accessToken) return
     setPickerError('')
@@ -104,18 +130,103 @@ export default function App() {
   }
 
   useEffect(() => {
-    if (!accessToken || !sheetId || !selectedTab) return
+    if (!accessToken || !sheetId || !selectedTab || dataSource === 'firebase') return
     setLoading(true)
     setError('')
     loadGoogleSheet(accessToken, sheetId, selectedTab)
-      .then(values => {
+      .then(async values => {
         const parsed = parseSheetRows(values)
         if (parsed.length === 0) throw new Error('No data found in Sheet')
-        setRows(parsed)
+
+        try {
+          await saveSheetUpload(authEmail, sheetId, sheetName, selectedTab, parsed)
+        } catch (e) {
+          console.error('Failed to save upload to Firebase', e)
+        }
+
+        try {
+          const allRows = await getAllUploadRows()
+          setRows(dedupeRows(allRows.length > 0 ? allRows : parsed))
+        } catch (e) {
+          console.error('Failed to load combined data from Firebase', e)
+          setRows(parsed)
+        }
       })
       .catch(e => setError(e instanceof Error ? e.message : 'Failed to load data'))
       .finally(() => setLoading(false))
-  }, [accessToken, sheetId, selectedTab])
+  }, [accessToken, sheetId, sheetName, selectedTab, authEmail, dataSource])
+
+  async function handleViewAllDashboard() {
+    setFbError('')
+    setFbLoading(true)
+    try {
+      const allRows = await getAllUploadRows()
+      if (allRows.length === 0) {
+        setFbError('No previous uploads found in Firebase yet')
+        return
+      }
+      setDataSource('firebase')
+      setSheetId('__all__')
+      setSheetName('All uploaded sheets')
+      setTabs(['All data'])
+      setSelectedTab('All data')
+      setRows(dedupeRows(allRows))
+    } catch (e) {
+      setFbError(e instanceof Error ? e.message : 'Failed to load data from Firebase')
+    } finally {
+      setFbLoading(false)
+    }
+  }
+
+  async function handleDeleteUploads() {
+    const year = parseInt(delYear, 10)
+    if (!Number.isFinite(year)) {
+      setDelError('Please enter a valid year')
+      return
+    }
+    const month = delMonth ? parseInt(delMonth, 10) : undefined
+    const day = month && delDay ? parseInt(delDay, 10) : undefined
+
+    const label = day ? `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+      : month ? `${year}-${String(month).padStart(2, '0')}`
+      : `${year}`
+    if (!window.confirm(`Delete all uploaded data from ${label}? This cannot be undone.`)) return
+
+    setDelError('')
+    setDelMessage('')
+    setDelLoading(true)
+    try {
+      const count = await deleteUploadsByDate(year, month, day)
+      setDelMessage(`Deleted ${count} upload record(s) from ${label}`)
+    } catch (e) {
+      setDelError(e instanceof Error ? e.message : 'Failed to delete uploads')
+    } finally {
+      setDelLoading(false)
+    }
+  }
+
+  async function handleDeleteBySheet() {
+    if (!delSheetId) {
+      setDelSheetError('Please choose a sheet')
+      return
+    }
+    const label = uploadedSheets.find(s => s.sheetId === delSheetId)?.sheetName ?? delSheetId
+    if (!window.confirm(`Delete all uploaded data for "${label}"? This cannot be undone.`)) return
+
+    setDelSheetError('')
+    setDelSheetMessage('')
+    setDelSheetLoading(true)
+    try {
+      const count = await deleteUploadsBySheet(delSheetId)
+      setDelSheetMessage(`Deleted ${count} upload record(s) for "${label}"`)
+      setUploadedSheets(prev => prev.filter(s => s.sheetId !== delSheetId))
+      setDelSheetId('')
+    } catch (e) {
+      setDelSheetError(e instanceof Error ? e.message : 'Failed to delete uploads')
+    } finally {
+      setDelSheetLoading(false)
+    }
+  }
 
   function handleLogout() {
     setAccessToken(null)
@@ -129,6 +240,8 @@ export default function App() {
     setRows([])
     setFilters(null)
     setError('')
+    setDataSource(null)
+    setFbError('')
   }
 
   function handleChangeSheet() {
@@ -139,6 +252,8 @@ export default function App() {
     setRows([])
     setFilters(null)
     setError('')
+    setDataSource(null)
+    setFbError('')
   }
 
   const { zones, clubs, dates } = useMemo(() => getUniqueValues(rows), [rows])
@@ -230,6 +345,78 @@ export default function App() {
           Browse Google Drive
         </button>
         {pickerError && <p style={{ color: 'var(--red)', marginTop: 16 }}>{pickerError}</p>}
+        <button
+          className="logout-btn"
+          onClick={handleViewAllDashboard}
+          disabled={fbLoading}
+          style={{ maxWidth: 320, margin: '16px auto 0' }}
+        >
+          {fbLoading ? 'Loading...' : 'View Dashboard (all sheets combined)'}
+        </button>
+        {fbError && <p style={{ color: 'var(--red)', marginTop: 16 }}>{fbError}</p>}
+
+        <details className="manage-panel">
+          <summary>Danger zone: delete uploaded data</summary>
+
+          <div className="manage-row">
+            <span className="manage-row-label">By date</span>
+            <input
+              type="number"
+              value={delYear}
+              onChange={e => setDelYear(e.target.value)}
+              placeholder="Year"
+              className="manage-field manage-field-year"
+            />
+            <select
+              value={delMonth}
+              onChange={e => { setDelMonth(e.target.value); setDelDay('') }}
+              className="manage-field"
+            >
+              <option value="">All months</option>
+              {Array.from({ length: 12 }, (_, i) => i + 1).map(m => (
+                <option key={m} value={m}>{String(m).padStart(2, '0')}</option>
+              ))}
+            </select>
+            <select
+              value={delDay}
+              onChange={e => setDelDay(e.target.value)}
+              disabled={!delMonth}
+              className="manage-field"
+            >
+              <option value="">All days</option>
+              {Array.from({ length: 31 }, (_, i) => i + 1).map(d => (
+                <option key={d} value={d}>{String(d).padStart(2, '0')}</option>
+              ))}
+            </select>
+            <button className="manage-btn" onClick={handleDeleteUploads} disabled={delLoading}>
+              {delLoading ? '...' : 'Delete'}
+            </button>
+          </div>
+          {delMessage && <p className="manage-msg" style={{ color: 'var(--green)' }}>{delMessage}</p>}
+          {delError && <p className="manage-msg" style={{ color: 'var(--red)' }}>{delError}</p>}
+
+          <div className="manage-row">
+            <span className="manage-row-label">By sheet</span>
+            <select
+              value={delSheetId}
+              onChange={e => setDelSheetId(e.target.value)}
+              className="manage-field manage-field-sheet"
+            >
+              <option value="">
+                {uploadedSheets.length === 0 ? 'No uploaded sheets yet' : 'Choose a sheet'}
+              </option>
+              {uploadedSheets.map(s => (
+                <option key={s.sheetId} value={s.sheetId}>{s.sheetName}</option>
+              ))}
+            </select>
+            <button className="manage-btn" onClick={handleDeleteBySheet} disabled={delSheetLoading || !delSheetId}>
+              {delSheetLoading ? '...' : 'Delete'}
+            </button>
+          </div>
+          {delSheetMessage && <p className="manage-msg" style={{ color: 'var(--green)' }}>{delSheetMessage}</p>}
+          {delSheetError && <p className="manage-msg" style={{ color: 'var(--red)' }}>{delSheetError}</p>}
+        </details>
+
         <button className="logout-btn" onClick={handleLogout} style={{ marginTop: 24 }}>Sign out</button>
       </div>
     )
@@ -306,7 +493,7 @@ export default function App() {
             <span className="theme-toggle-icon moon">☾</span>
             <span className="theme-toggle-knob" />
           </button>
-          <button className="logout-btn" onClick={handleChangeSheet} title="Change sheet">Change sheet</button>
+          <button className="logout-btn" onClick={handleChangeSheet} title="Upload sheet">Upload sheet</button>
           <button className="logout-btn" onClick={handleLogout}>Sign out</button>
         </div>
       </header>

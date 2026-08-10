@@ -7,7 +7,7 @@ const DOW_ORDER: Record<string, number> = {
 
 export function parseSheetRows(values: string[][]): RawRow[] {
   const [header, ...rows] = values
-  return rows
+  const parsed = rows
     .filter(r => r.length >= 11)
     .map((r, i) => ({
       _rowIndex: i + 2, // row 1 = header, data starts at row 2
@@ -23,6 +23,25 @@ export function parseSheetRows(values: string[][]): RawRow[] {
       total_h: parseFloat(r[header.indexOf('total_h')]) || 0,
       day_of_week: r[header.indexOf('day_of_week')],
     }))
+  return dedupeRows(parsed)
+}
+
+// Drops exact duplicate rows (same date + court + values), keeping the first
+// occurrence, so a repeated line in the Sheet doesn't double-count in aggregates.
+export function dedupeRows(rows: RawRow[]): RawRow[] {
+  const seen = new Set<string>()
+  const result: RawRow[] = []
+  for (const r of rows) {
+    const key = [
+      r.date, r.zone, r.club, r.court_id,
+      r.booked_peak_h, r.booked_offpeak_h, r.booked_total_h,
+      r.total_peak_h, r.total_offpeak_h, r.total_h, r.day_of_week,
+    ].join('|')
+    if (seen.has(key)) continue
+    seen.add(key)
+    result.push(r)
+  }
+  return result
 }
 
 function pct(booked: number, total: number) {
