@@ -10,11 +10,26 @@ export async function downloadDriveFile(
     headers: { Authorization: `Bearer ${accessToken}` },
   })
   if (!res.ok) {
-    if (res.status === 403 || res.status === 404) {
-      throw new Error("You don't have access to this file. Please pick it again from the Drive browser.")
-    }
     const err = await res.json().catch(() => ({}))
-    throw new Error(err?.error?.message ?? `Drive API error ${res.status}`)
+    const reason: string | undefined = err?.error?.errors?.[0]?.reason
+    const detail: string | undefined = err?.error?.message
+
+    // The Drive API itself is switched off for this Google Cloud project — a
+    // one-time fix by the app owner, not something each user can do.
+    if (reason === 'accessNotConfigured' || /has not been used in project|is disabled/i.test(detail ?? '')) {
+      throw new Error(
+        'Google Drive API is not enabled for this app yet. The app owner needs to enable "Google Drive API" in the Google Cloud console. ' +
+        '(Google Sheets still work in the meantime — or use "Upload from this device".)',
+      )
+    }
+    if (res.status === 403 || res.status === 404) {
+      throw new Error(
+        detail
+          ? `Drive denied access to this file: ${detail}`
+          : "Drive denied access to this file. Try picking it again from the Drive browser, or use \"Upload from this device\".",
+      )
+    }
+    throw new Error(detail ?? `Drive API error ${res.status}`)
   }
   return res.arrayBuffer()
 }
