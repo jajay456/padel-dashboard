@@ -1,3 +1,24 @@
+/** Downloads the raw bytes of a non-Google file stored in Drive (an uploaded
+ *  CSV / Excel / ODS). Works under the `drive.file` scope because the file was
+ *  just granted to the app by the user through the Picker. */
+export async function downloadDriveFile(
+  accessToken: string,
+  fileId: string,
+): Promise<ArrayBuffer> {
+  const url = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&supportsAllDrives=true`
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  })
+  if (!res.ok) {
+    if (res.status === 403 || res.status === 404) {
+      throw new Error("You don't have access to this file. Please pick it again from the Drive browser.")
+    }
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err?.error?.message ?? `Drive API error ${res.status}`)
+  }
+  return res.arrayBuffer()
+}
+
 export async function loadGoogleSheet(
   accessToken: string,
   spreadsheetId: string,

@@ -3,7 +3,8 @@ import * as XLSX from 'xlsx'
 /** Parsed workbook: sheet/tab name -> rows of string cells (row 0 is the header). */
 export interface LocalWorkbook {
   fileName: string
-  /** A stable id derived from the file name + size + last-modified time. */
+  /** A stable id: file name + size + mtime for device uploads, the Drive id
+   *  for files pulled from Google Drive. */
   fileId: string
   sheets: Record<string, string[][]>
   sheetNames: string[]
@@ -17,9 +18,25 @@ export const ACCEPTED_FILE_ATTR =
   ACCEPTED_FILE_EXT.map(e => `.${e}`).join(',') +
   ',application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv'
 
+/** MIME types (besides native Google Sheets) the Drive picker should show. */
+export const DRIVE_IMPORT_MIME_TYPES = [
+  'text/csv',
+  'text/tab-separated-values',
+  'text/plain',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.ms-excel',
+  'application/vnd.oasis.opendocument.spreadsheet',
+]
+
 function extOf(name: string): string {
   const dot = name.lastIndexOf('.')
   return dot === -1 ? '' : name.slice(dot + 1).toLowerCase()
+}
+
+function isTextLike(ext: string, mimeType?: string): boolean {
+  if (TEXT_EXT.includes(ext)) return true
+  if (mimeType && /^text\/(csv|tab-separated-values|plain)/.test(mimeType)) return true
+  return false
 }
 
 const pad2 = (n: number) => String(n).padStart(2, '0')
@@ -82,17 +99,15 @@ function parseTextFile(buf: ArrayBuffer, ext: string): string[][] {
   let text = new TextDecoder('utf-8').decode(buf)
   if (text.charCodeAt(0) === 0xfeff) text = text.slice(1) // strip BOM
 
+  const nl = text.indexOf('\n')
+  const firstLine = nl === -1 ? text : text.slice(0, nl)
+  const tabs = (firstLine.match(/\t/g) ?? []).length
+  const semis = (firstLine.match(/;/g) ?? []).length
+  const commas = (firstLine.match(/,/g) ?? []).length
+
   let delimiter = ','
-  if (ext === 'tsv') {
-    delimiter = '\t'
-  } else if (ext === 'txt') {
-    const firstLine = text.slice(0, text.indexOf('\n') === -1 ? undefined : text.indexOf('\n'))
-    const tabs = (firstLine.match(/\t/g) ?? []).length
-    const semis = (firstLine.match(/;/g) ?? []).length
-    const commas = (firstLine.match(/,/g) ?? []).length
-    if (tabs >= commas && tabs >= semis && tabs > 0) delimiter = '\t'
-    else if (semis > commas) delimiter = ';'
-  }
+  if (ext === 'tsv' || (tabs > 0 && tabs >= commas && tabs >= semis)) delimiter = '\t'
+  else if (semis > commas) delimiter = ';'
 
   return normalize(parseDelimited(text, delimiter))
 }
@@ -113,26 +128,27 @@ function parseSpreadsheetFile(buf: ArrayBuffer): Record<string, string[][]> {
   return sheets
 }
 
-/** Reads a local .csv/.tsv/.xlsx/.xls (etc.) file into a workbook the dashboard
- *  can parse with the same code path as a Google Sheet. */
-export async function loadLocalFile(file: File): Promise<LocalWorkbook> {
-  const ext = extOf(file.name)
-  if (!ACCEPTED_FILE_EXT.includes(ext)) {
-    throw new Error(
-      `Unsupported file type ".${ext}". Please upload one of: ${ACCEPTED_FILE_EXT.join(', ')}`,
-    )
-  }
+interface ParseOpts {
+  fileName: string
+  fileId: string
+  mimeType?: string
+}
 
-  const buf = await file.arrayBuffer()
+/** Turns raw bytes (a device file or a Drive download) into a workbook the
+ *  dashboard parses with the same code path as a Google Sheet. */
+export function parseWorkbookBuffer(buf: ArrayBuffer, opts: ParseOpts): LocalWorkbook {
+  const { fileName, fileId, mimeType } = opts
+  const ext = extOf(fileName)
+  const baseName = fileName.replace(/\.[^.]+$/, '') || fileName
 
   let sheets: Record<string, string[][]>
   try {
-    sheets = TEXT_EXT.includes(ext)
-      ? { [file.name.replace(/\.[^.]+$/, '')]: parseTextFile(buf, ext) }
+    sheets = isTextLike(ext, mimeType)
+      ? { [baseName]: parseTextFile(buf, ext) }
       : parseSpreadsheetFile(buf)
   } catch (e) {
     throw new Error(
-      `Could not read "${file.name}". It may be corrupted or not a real spreadsheet. (${
+      `Could not read "${fileName}". It may be corrupted or not a real spreadsheet. (${
         e instanceof Error ? e.message : 'parse error'
       })`,
       { cause: e },
@@ -141,13 +157,29 @@ export async function loadLocalFile(file: File): Promise<LocalWorkbook> {
 
   const sheetNames = Object.keys(sheets).filter(n => sheets[n].length > 0)
   if (sheetNames.length === 0) {
-    throw new Error(`No data found in "${file.name}".`)
+    throw new Error(`No data found in "${fileName}".`)
   }
 
   return {
-    fileName: file.name,
-    fileId: `local:${file.name}:${file.size}:${file.lastModified}`,
+    fileName,
+    fileId,
     sheets: Object.fromEntries(sheetNames.map(n => [n, sheets[n]])),
     sheetNames,
   }
+}
+
+/** Reads a local .csv/.tsv/.xlsx/.xls (etc.) file selected from the device. */
+export async function loadLocalFile(file: File): Promise<LocalWorkbook> {
+  const ext = extOf(file.name)
+  if (ext && !ACCEPTED_FILE_EXT.includes(ext)) {
+    throw new Error(
+      `Unsupported file type ".${ext}". Please upload one of: ${ACCEPTED_FILE_EXT.join(', ')}`,
+    )
+  }
+  const buf = await file.arrayBuffer()
+  return parseWorkbookBuffer(buf, {
+    fileName: file.name,
+    fileId: `local:${file.name}:${file.size}:${file.lastModified}`,
+    mimeType: file.type || undefined,
+  })
 }

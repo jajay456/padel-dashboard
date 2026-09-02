@@ -10,9 +10,9 @@ import DataTable from './components/DataTable'
 import RawDataTable from './components/RawDataTable'
 import LoginPage from './components/LoginPage'
 import { parseSheetRows, dedupeRows, applyFilters, aggregateByDay, aggregateByZone, aggregateByClub, aggregateByDayOfWeek, getKPIs, getUniqueValues, aggregateByDayPerKey } from './utils/dataProcessing'
-import { loadGoogleSheet, getSheetTabs } from './utils/loadGoogleSheet'
-import { openSheetPicker } from './utils/loadPicker'
-import { loadLocalFile, ACCEPTED_FILE_ATTR, type LocalWorkbook } from './utils/loadLocalFile'
+import { loadGoogleSheet, getSheetTabs, downloadDriveFile } from './utils/loadGoogleSheet'
+import { openSheetPicker, appIdFromClientId, GOOGLE_SHEET_MIME } from './utils/loadPicker'
+import { loadLocalFile, parseWorkbookBuffer, ACCEPTED_FILE_ATTR, type LocalWorkbook } from './utils/loadLocalFile'
 import { getUserEmail, checkAuthorization } from './utils/checkAuthorization'
 import { saveSheetUpload, getAllUploadRows, deleteUploadsByDate, getUploadedSheets, deleteUploadsBySheet, type UploadedSheet } from './utils/saveUpload'
 import type { Filters, RawRow } from './types'
@@ -21,6 +21,7 @@ import logoLight from './assets/Logo_light.png'
 import './App.css'
 
 const API_KEY = import.meta.env.VITE_GOOGLE_API_KEY as string
+const APP_ID = appIdFromClientId(import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined)
 
 type AuthState = 'checking' | 'authorized' | 'unauthorized' | 'error'
 
@@ -117,9 +118,33 @@ export default function App() {
   async function handlePickSheet() {
     if (!accessToken) return
     setPickerError('')
+    setLocalError('')
     try {
-      const result = await openSheetPicker(accessToken, API_KEY)
+      const result = await openSheetPicker(accessToken, API_KEY, APP_ID)
       if (!result) return
+
+      if (result.mimeType && result.mimeType !== GOOGLE_SHEET_MIME) {
+        // An uploaded CSV / Excel / ODS file sitting in Drive — download the
+        // bytes and run them through the same parser as a device upload.
+        setTabsLoading(true)
+        const buf = await downloadDriveFile(accessToken, result.id)
+        const wb = parseWorkbookBuffer(buf, {
+          fileName: result.name,
+          fileId: `drive:${result.id}`,
+          mimeType: result.mimeType,
+        })
+        setLocalWb(wb)
+        setDataSource('local')
+        setSheetId(wb.fileId)
+        setSheetName(wb.fileName)
+        setRows([])
+        setFilters(null)
+        setError('')
+        setTabs(wb.sheetNames)
+        setSelectedTab(wb.sheetNames[0])
+        return
+      }
+
       setSheetId(result.id)
       setSheetName(result.name)
       setTabsLoading(true)
@@ -401,13 +426,16 @@ export default function App() {
   if (!sheetId) {
     return (
       <div className="loading-overlay">
-        <h2>Choose a Google Sheet</h2>
+        <h2>Choose a data source</h2>
         <p style={{ opacity: 0.6, marginBottom: 16 }}>
-          Browse your Google Drive and pick the spreadsheet to analyze.
+          Pick a Google Sheet — or a CSV / Excel file — from your Google Drive.
         </p>
         <button className="google-btn" onClick={handlePickSheet} style={{ maxWidth: 320, margin: '0 auto' }}>
           Browse Google Drive
         </button>
+        <p style={{ opacity: 0.55, fontSize: 12, marginTop: 8 }}>
+          Google Sheets, plus CSV / TSV / Excel (.xlsx, .xls) / ODS files stored in Drive
+        </p>
         {pickerError && <p style={{ color: 'var(--red)', marginTop: 16 }}>{pickerError}</p>}
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, maxWidth: 320, margin: '16px auto 0', opacity: 0.5 }}>

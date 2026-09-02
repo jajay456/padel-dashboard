@@ -1,3 +1,5 @@
+import { DRIVE_IMPORT_MIME_TYPES } from './loadLocalFile'
+
 declare global {
   interface Window {
     gapi: any
@@ -21,39 +23,53 @@ function loadGapiScript(): Promise<void> {
   return gapiLoaded
 }
 
-export interface PickedSheet {
+export const GOOGLE_SHEET_MIME = 'application/vnd.google-apps.spreadsheet'
+
+export interface PickedFile {
   id: string
   name: string
+  mimeType: string
+}
+
+/** GCP project number, used as the Picker "app id" so that files the user
+ *  selects become readable by this OAuth client under the `drive.file` scope.
+ *  It is the numeric prefix of the OAuth client id (before the first "-"). */
+export function appIdFromClientId(clientId: string | undefined): string | undefined {
+  const m = /^(\d+)-/.exec(clientId ?? '')
+  return m ? m[1] : undefined
 }
 
 export async function openSheetPicker(
   accessToken: string,
-  apiKey: string
-): Promise<PickedSheet | null> {
+  apiKey: string,
+  appId?: string,
+): Promise<PickedFile | null> {
   await loadGapiScript()
+  const picker = window.google.picker
 
   return new Promise((resolve) => {
-    const view = new window.google.picker.DocsView(
-      window.google.picker.ViewId.SPREADSHEETS
-    )
-      .setMimeTypes('application/vnd.google-apps.spreadsheet')
+    // Native Google Sheets + uploaded CSV / Excel / ODS files sitting in Drive.
+    const view = new picker.DocsView(picker.ViewId.DOCS)
+      .setMimeTypes([GOOGLE_SHEET_MIME, ...DRIVE_IMPORT_MIME_TYPES].join(','))
       .setIncludeFolders(true)
+      .setSelectFolderEnabled(false)
 
-    const picker = new window.google.picker.PickerBuilder()
+    const builder = new picker.PickerBuilder()
       .addView(view)
       .setOAuthToken(accessToken)
       .setDeveloperKey(apiKey)
-      .setTitle('Select a Google Sheet')
+      .setTitle('Select a spreadsheet or CSV/Excel file')
+
+    if (appId) builder.setAppId(appId)
       .setCallback((data: any) => {
-        if (data.action === window.google.picker.Action.PICKED) {
+        if (data.action === picker.Action.PICKED) {
           const doc = data.docs[0]
-          resolve({ id: doc.id, name: doc.name })
-        } else if (data.action === window.google.picker.Action.CANCEL) {
+          resolve({ id: doc.id, name: doc.name, mimeType: doc.mimeType })
+        } else if (data.action === picker.Action.CANCEL) {
           resolve(null)
         }
       })
-      .build()
 
-    picker.setVisible(true)
+    builder.build().setVisible(true)
   })
 }
