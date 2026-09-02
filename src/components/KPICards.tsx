@@ -16,6 +16,33 @@ interface Props {
   topClub: string
 }
 
+type IconName = 'bolt' | 'moon' | 'pin' | 'trophy' | 'chart'
+
+function Icon({ name }: { name: IconName }) {
+  const p = {
+    width: 20,
+    height: 20,
+    viewBox: '0 0 24 24',
+    fill: 'none',
+    stroke: 'currentColor',
+    strokeWidth: 1.75,
+    strokeLinecap: 'round' as const,
+    strokeLinejoin: 'round' as const,
+  }
+  switch (name) {
+    case 'bolt':
+      return <svg {...p}><path d="M13 3 5 13h5l-1 8 8-10h-5l1-8Z" /></svg>
+    case 'moon':
+      return <svg {...p}><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5Z" /></svg>
+    case 'pin':
+      return <svg {...p}><path d="M12 21s-6-5.4-6-10a6 6 0 0 1 12 0c0 4.6-6 10-6 10Z" /><circle cx="12" cy="11" r="2.2" /></svg>
+    case 'trophy':
+      return <svg {...p}><path d="M8 4h8v4a4 4 0 0 1-8 0V4Z" /><path d="M8 6H5v1a3 3 0 0 0 3 3M16 6h3v1a3 3 0 0 1-3 3M9.5 20h5M12 12v8" /></svg>
+    case 'chart':
+      return <svg {...p}><path d="M4 5v14h16M8.5 15V11M12.5 15V8M16.5 15v-3" /></svg>
+  }
+}
+
 function OccBar({ label, pct, color }: { label: string; pct: number; color: string }) {
   return (
     <div className="occ-bars-row">
@@ -32,12 +59,12 @@ function OccBar({ label, pct, color }: { label: string; pct: number; color: stri
 
 function SmallCard({ label, value, sub, icon, iconBg, color }: {
   label: string; value: string; sub?: string
-  icon: string; iconBg: string; color: string
+  icon: IconName; iconBg: string; color: string
 }) {
   return (
     <div className="kpi-card">
-      <div className="kpi-icon" style={{ background: iconBg }}>
-        <span>{icon}</span>
+      <div className="kpi-icon" style={{ background: iconBg, color }}>
+        <Icon name={icon} />
       </div>
       <div className="kpi-label">{label}</div>
       <div className="kpi-value" style={{ color, fontSize: 24 }}>{value}</div>
@@ -58,8 +85,8 @@ export default function KPICards({ kpi, topZone, topClub }: Props) {
     <div className="kpi-section">
       {/* Hero dark card */}
       <div className="kpi-card hero" style={{ minWidth: 200 }}>
-        <div className="kpi-icon" style={{ background: '#22c55e22' }}>
-          <span>📊</span>
+        <div className="kpi-icon" style={{ background: '#22c55e22', color: '#22c55e' }}>
+          <Icon name="chart" />
         </div>
         <div className="kpi-label">Overall Occupancy</div>
         <div className="kpi-value" style={{ color: '#22c55e', fontSize: 40 }}>
@@ -105,10 +132,10 @@ export default function KPICards({ kpi, topZone, topClub }: Props) {
       </div>
 
       <div className="kpi-grid">
-        <SmallCard label="Peak Hours"     value={`${kpi.peak_pct}%`}    sub="Peak period"     icon="⚡" iconBg="var(--amber-bg)"  color="var(--amber)"  />
-        <SmallCard label="Off-peak"       value={`${kpi.offpeak_pct}%`} sub="Off-peak period" icon="🌙" iconBg="var(--blue-bg)"   color="var(--blue)"   />
-        <SmallCard label="Top Zone"       value={topZone}                                    icon="📍" iconBg="var(--purple-bg)" color="var(--purple)" />
-        <SmallCard label="Top Club"       value={topClub}                sub="by occupancy"  icon="🏆" iconBg="var(--pink-bg)"   color="var(--pink)"   />
+        <SmallCard label="Peak Hours"     value={`${kpi.peak_pct}%`}    sub="Peak period"     icon="bolt"   iconBg="var(--amber-bg)"  color="var(--amber)"  />
+        <SmallCard label="Off-peak"       value={`${kpi.offpeak_pct}%`} sub="Off-peak period" icon="moon"   iconBg="var(--blue-bg)"   color="var(--blue)"   />
+        <SmallCard label="Top Zone"       value={topZone}                                    icon="pin"    iconBg="var(--purple-bg)" color="var(--purple)" />
+        <SmallCard label="Top Club"       value={topClub}                sub="by occupancy"  icon="trophy" iconBg="var(--pink-bg)"   color="var(--pink)"   />
       </div>
 
       <div className="occ-bars-card">
