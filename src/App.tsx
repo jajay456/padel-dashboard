@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useEffect } from 'react'
+import { useState, useMemo, useCallback, useEffect, useRef } from 'react'
 import FilterBar from './components/FilterBar'
 import KPICards from './components/KPICards'
 import TrendChart from './components/TrendChart'
@@ -12,6 +12,7 @@ import LoginPage from './components/LoginPage'
 import { parseSheetRows, dedupeRows, applyFilters, aggregateByDay, aggregateByZone, aggregateByClub, aggregateByDayOfWeek, getKPIs, getUniqueValues, aggregateByDayPerKey } from './utils/dataProcessing'
 import { loadGoogleSheet, getSheetTabs } from './utils/loadGoogleSheet'
 import { openSheetPicker } from './utils/loadPicker'
+import { loadLocalFile, ACCEPTED_FILE_ATTR, type LocalWorkbook } from './utils/loadLocalFile'
 import { getUserEmail, checkAuthorization } from './utils/checkAuthorization'
 import { saveSheetUpload, getAllUploadRows, deleteUploadsByDate, getUploadedSheets, deleteUploadsBySheet, type UploadedSheet } from './utils/saveUpload'
 import type { Filters, RawRow } from './types'
@@ -42,9 +43,13 @@ export default function App() {
   const [error, setError] = useState('')
   const [filters, setFilters] = useState<Filters | null>(null)
   const [dark, setDark] = useState(false)
-  const [dataSource, setDataSource] = useState<'sheet' | 'firebase' | null>(null)
+  const [dataSource, setDataSource] = useState<'sheet' | 'firebase' | 'local' | null>(null)
   const [fbLoading, setFbLoading] = useState(false)
   const [fbError, setFbError] = useState('')
+
+  const [localWb, setLocalWb] = useState<LocalWorkbook | null>(null)
+  const [localError, setLocalError] = useState('')
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const [delYear, setDelYear] = useState(String(new Date().getFullYear()))
   const [delMonth, setDelMonth] = useState('')
@@ -129,8 +134,63 @@ export default function App() {
     }
   }
 
+  async function handlePickLocalFile(file: File) {
+    setLocalError('')
+    setPickerError('')
+    try {
+      const wb = await loadLocalFile(file)
+      setLocalWb(wb)
+      setDataSource('local')
+      setSheetId(wb.fileId)
+      setSheetName(wb.fileName)
+      setRows([])
+      setFilters(null)
+      setError('')
+      setTabs(wb.sheetNames)
+      setSelectedTab(wb.sheetNames[0])
+    } catch (e) {
+      setLocalError(e instanceof Error ? e.message : 'Failed to read file')
+      setLocalWb(null)
+      setSheetId(null)
+      setDataSource(null)
+    }
+  }
+
+  // Load & save data from a locally-uploaded file (CSV / Excel / etc.)
   useEffect(() => {
-    if (!accessToken || !sheetId || !selectedTab || dataSource === 'firebase') return
+    if (dataSource !== 'local' || !localWb || !selectedTab) return
+    const values = localWb.sheets[selectedTab]
+    if (!values) return
+    setLoading(true)
+    setError('')
+    ;(async () => {
+      try {
+        const parsed = parseSheetRows(values)
+        if (parsed.length === 0) throw new Error('No usable rows found — check the column headers match the expected format')
+
+        try {
+          await saveSheetUpload(authEmail, localWb.fileId, localWb.fileName, selectedTab, parsed)
+        } catch (e) {
+          console.error('Failed to save upload to Firebase', e)
+        }
+
+        try {
+          const allRows = await getAllUploadRows()
+          setRows(dedupeRows(allRows.length > 0 ? allRows : parsed))
+        } catch (e) {
+          console.error('Failed to load combined data from Firebase', e)
+          setRows(parsed)
+        }
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Failed to load file')
+      } finally {
+        setLoading(false)
+      }
+    })()
+  }, [dataSource, localWb, selectedTab, authEmail])
+
+  useEffect(() => {
+    if (!accessToken || !sheetId || !selectedTab || dataSource === 'firebase' || dataSource === 'local') return
     setLoading(true)
     setError('')
     loadGoogleSheet(accessToken, sheetId, selectedTab)
@@ -242,6 +302,8 @@ export default function App() {
     setError('')
     setDataSource(null)
     setFbError('')
+    setLocalWb(null)
+    setLocalError('')
   }
 
   function handleChangeSheet() {
@@ -254,6 +316,8 @@ export default function App() {
     setError('')
     setDataSource(null)
     setFbError('')
+    setLocalWb(null)
+    setLocalError('')
   }
 
   const { zones, clubs, dates } = useMemo(() => getUniqueValues(rows), [rows])
@@ -345,6 +409,35 @@ export default function App() {
           Browse Google Drive
         </button>
         {pickerError && <p style={{ color: 'var(--red)', marginTop: 16 }}>{pickerError}</p>}
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, maxWidth: 320, margin: '16px auto 0', opacity: 0.5 }}>
+          <span style={{ flex: 1, height: 1, background: 'currentColor' }} />
+          <span style={{ fontSize: 12 }}>or</span>
+          <span style={{ flex: 1, height: 1, background: 'currentColor' }} />
+        </div>
+
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept={ACCEPTED_FILE_ATTR}
+          style={{ display: 'none' }}
+          onChange={e => {
+            const file = e.target.files?.[0]
+            e.target.value = ''
+            if (file) handlePickLocalFile(file)
+          }}
+        />
+        <button
+          className="google-btn"
+          onClick={() => fileInputRef.current?.click()}
+          style={{ maxWidth: 320, margin: '16px auto 0' }}
+        >
+          Upload from this device
+        </button>
+        <p style={{ opacity: 0.55, fontSize: 12, marginTop: 8 }}>
+          Supports CSV, TSV and Excel (.xlsx, .xls) files
+        </p>
+        {localError && <p style={{ color: 'var(--red)', marginTop: 16 }}>{localError}</p>}
         <button
           className="logout-btn"
           onClick={handleViewAllDashboard}
