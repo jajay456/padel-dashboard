@@ -39,20 +39,34 @@ export default function FilterBar({ filters, allZones, allClubs, minDate, maxDat
         <div className="filter-group">
           <label className="filter-label">Date Range</label>
           <div className="date-range">
+            {/* Every day is selectable — pick the start and end yourself.
+                If the range ends up reversed, the other end follows along. */}
             <input
               type="date"
               value={filters.dateStart}
-              min={minDate}
-              max={filters.dateEnd}
-              onChange={e => onChange({ ...filters, dateStart: e.target.value })}
+              onChange={e => {
+                const dateStart = e.target.value
+                if (!dateStart) return
+                onChange({
+                  ...filters,
+                  dateStart,
+                  dateEnd: dateStart > filters.dateEnd ? dateStart : filters.dateEnd,
+                })
+              }}
             />
             <span className="date-sep">→</span>
             <input
               type="date"
               value={filters.dateEnd}
-              min={filters.dateStart}
-              max={maxDate}
-              onChange={e => onChange({ ...filters, dateEnd: e.target.value })}
+              onChange={e => {
+                const dateEnd = e.target.value
+                if (!dateEnd) return
+                onChange({
+                  ...filters,
+                  dateEnd,
+                  dateStart: dateEnd < filters.dateStart ? dateEnd : filters.dateStart,
+                })
+              }}
             />
           </div>
         </div>
