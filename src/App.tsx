@@ -669,7 +669,7 @@ export default function App() {
             <span className="theme-toggle-icon moon">☾</span>
             <span className="theme-toggle-knob" />
           </button>
-          <button className="login-btn" onClick={handleChangeSheet} title="Upload sheet">Upload sheet</button>
+          <button className="logout-btn" onClick={handleChangeSheet} title="Upload sheet">Upload sheet</button>
           <button className="logout-btn" onClick={handleLogout}>Sign out</button>
         </div>
       </header>

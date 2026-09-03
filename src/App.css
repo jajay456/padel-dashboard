@@ -225,6 +225,16 @@ body {
 }
 .theme-toggle.dark .theme-toggle-knob { transform: translate(24px, -50%); }
 
+.login-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  padding: 7px 16px; border-radius: var(--radius-xs);
+  cursor: pointer; font-size: 13px; font-weight: 500;
+  transition: all 0.15s; font-family: inherit;
+}
+.login-btn:hover { border-color: var(--green); color: var(--green); }
+
 .logout-btn {
   background: transparent;
   border: 1px solid var(--border);
@@ -233,7 +243,7 @@ body {
   cursor: pointer; font-size: 13px; font-weight: 500;
   transition: all 0.15s; font-family: inherit;
 }
-.logout-btn:hover { border-color: var(--green); color: var(--green); }
+.logout-btn:hover { border-color: var(--red); color: var(--red); }
 
 /* ── Manage uploaded data (collapsible danger zone) ── */
 .manage-panel {
