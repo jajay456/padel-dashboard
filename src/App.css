@@ -312,6 +312,21 @@ body {
 }
 .date-range input:focus { border-color: var(--green); }
 .date-sep { color: var(--text-3); }
+.date-all-btn {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  padding: 8px 12px; border-radius: var(--radius-xs);
+  font-size: 12px; font-weight: 600;
+  cursor: pointer; transition: all 0.15s; font-family: inherit;
+  white-space: nowrap;
+}
+.date-all-btn:hover:not(:disabled) { border-color: var(--green); color: var(--green-text); }
+.date-all-btn:disabled { opacity: 0.4; cursor: default; }
+.date-hint {
+  display: block; margin-top: 6px;
+  color: var(--text-3); font-size: 11px; font-weight: 500;
+}
 
 .chip-group { display: flex; flex-wrap: wrap; gap: 6px; }
 .chip {

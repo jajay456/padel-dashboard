@@ -39,7 +39,8 @@ export default function FilterBar({ filters, allZones, allClubs, minDate, maxDat
         <div className="filter-group">
           <label className="filter-label">Date Range</label>
           <div className="date-range">
-            {/* Every day is selectable — pick the start and end yourself.
+            {/* Every day is selectable — no min/max cap. The range defaults to
+                the full span of the data; pick the start (and end) yourself.
                 If the range ends up reversed, the other end follows along. */}
             <input
               type="date"
@@ -68,7 +69,21 @@ export default function FilterBar({ filters, allZones, allClubs, minDate, maxDat
                 })
               }}
             />
+            {(minDate || maxDate) && (
+              <button
+                type="button"
+                className="date-all-btn"
+                onClick={() => onChange({ ...filters, dateStart: minDate, dateEnd: maxDate })}
+                disabled={filters.dateStart === minDate && filters.dateEnd === maxDate}
+                title={`Show every day (${minDate} → ${maxDate})`}
+              >
+                All days
+              </button>
+            )}
           </div>
+          {(minDate || maxDate) && (
+            <span className="date-hint">Data available: {minDate || '—'} → {maxDate || '—'}</span>
+          )}
         </div>
         {hasFilters && (
           <button className="reset-btn" onClick={onReset}>

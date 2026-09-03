@@ -246,10 +246,14 @@ export function aggregateByDayPerKey(
     })
 }
 
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/
+
 export function getUniqueValues(rows: RawRow[]) {
   return {
-    zones: [...new Set(rows.map(r => r.zone))].sort(),
-    clubs: [...new Set(rows.map(r => r.club))].sort(),
-    dates: [...new Set(rows.map(r => r.date))].sort(),
+    zones: [...new Set(rows.map(r => r.zone))].filter(Boolean).sort(),
+    clubs: [...new Set(rows.map(r => r.club))].filter(Boolean).sort(),
+    // Only keep well-formed YYYY-MM-DD values so the first/last entry are a
+    // reliable earliest/latest day for the default date range.
+    dates: [...new Set(rows.map(r => r.date))].filter(d => ISO_DATE.test(d)).sort(),
   }
 }
