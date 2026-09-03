@@ -257,13 +257,15 @@ export default function App() {
       .finally(() => setLoading(false))
   }, [accessToken, sheetId, sheetName, selectedTab, authEmail, dataSource])
 
-  async function handleViewAllDashboard() {
+  const handleViewAllDashboard = useCallback(async (opts?: { silent?: boolean }) => {
     setFbError('')
     setFbLoading(true)
     try {
       const allRows = await getAllUploadRows()
       if (allRows.length === 0) {
-        setFbError('No previous uploads found in Firebase yet')
+        // On the automatic post-login load this just means "nothing uploaded
+        // yet" — fall through to the data-source picker without a scary error.
+        if (!opts?.silent) setFbError('No previous uploads found in Firebase yet')
         return
       }
       setDataSource('firebase')
@@ -272,12 +274,27 @@ export default function App() {
       setTabs(['All data'])
       setSelectedTab('All data')
       setRows(dedupeRows(allRows))
+      setFilters(null)
+      setError('')
+      setSaveError('')
+      setLocalWb(null)
     } catch (e) {
       setFbError(e instanceof Error ? e.message : 'Failed to load data from Firebase')
     } finally {
       setFbLoading(false)
     }
-  }
+  }, [])
+
+  // After sign-in the combined dashboard is the landing page: pull every
+  // uploaded row from Firebase automatically. Runs once per session; a page
+  // refresh re-runs it, so the dashboard is always the first screen when data
+  // exists. Falls through to "Choose a data source" only when nothing is stored.
+  const autoLoadedRef = useRef(false)
+  useEffect(() => {
+    if (authState !== 'authorized' || autoLoadedRef.current) return
+    autoLoadedRef.current = true
+    handleViewAllDashboard({ silent: true })
+  }, [authState, handleViewAllDashboard])
 
   async function handleDeleteUploads() {
     const year = parseInt(delYear, 10)
@@ -442,6 +459,16 @@ export default function App() {
     )
   }
 
+  // Auto-loading the combined dashboard right after sign-in / refresh.
+  if (!sheetId && fbLoading) {
+    return (
+      <div className="loading-overlay">
+        <div className="spinner" />
+        <p>Loading dashboard...</p>
+      </div>
+    )
+  }
+
   if (!sheetId) {
     return (
       <div className="loading-overlay">
@@ -449,19 +476,6 @@ export default function App() {
         <p style={{ opacity: 0.6, marginBottom: 16 }}>
           Pick a Google Sheet — or a CSV / Excel file — from your Google Drive.
         </p>
-        <button className="google-btn" onClick={handlePickSheet} style={{ maxWidth: 320, margin: '0 auto' }}>
-          Browse Google Drive
-        </button>
-        <p style={{ opacity: 0.55, fontSize: 12, marginTop: 8 }}>
-          Google Sheets, plus CSV / TSV / Excel (.xlsx, .xls) / ODS files stored in Drive
-        </p>
-        {pickerError && <p style={{ color: 'var(--red)', marginTop: 16 }}>{pickerError}</p>}
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, maxWidth: 320, margin: '16px auto 0', opacity: 0.5 }}>
-          <span style={{ flex: 1, height: 1, background: 'currentColor' }} />
-          <span style={{ fontSize: 12 }}>or</span>
-          <span style={{ flex: 1, height: 1, background: 'currentColor' }} />
-        </div>
 
         <input
           ref={fileInputRef}
@@ -474,20 +488,31 @@ export default function App() {
             if (file) handlePickLocalFile(file)
           }}
         />
-        <button
-          className="google-btn"
-          onClick={() => fileInputRef.current?.click()}
-          style={{ maxWidth: 320, margin: '16px auto 0' }}
-        >
-          Upload from this device
-        </button>
-        <p style={{ opacity: 0.55, fontSize: 12, marginTop: 8 }}>
-          Supports CSV, TSV and Excel (.xlsx, .xls) files
-        </p>
+
+        <div className="source-btn-row">
+          <div className="source-btn-col">
+            <button className="google-btn" onClick={handlePickSheet}>
+              Browse Google Drive
+            </button>
+            <p className="source-btn-caption">
+              Google Sheets, plus CSV / TSV / Excel (.xlsx, .xls) / ODS files stored in Drive
+            </p>
+          </div>
+          <div className="source-btn-col">
+            <button className="google-btn" onClick={() => fileInputRef.current?.click()}>
+              Upload from this device
+            </button>
+            <p className="source-btn-caption">
+              Supports CSV, TSV and Excel (.xlsx, .xls) files
+            </p>
+          </div>
+        </div>
+
+        {pickerError && <p style={{ color: 'var(--red)', marginTop: 16 }}>{pickerError}</p>}
         {localError && <p style={{ color: 'var(--red)', marginTop: 16 }}>{localError}</p>}
         <button
           className="logout-btn"
-          onClick={handleViewAllDashboard}
+          onClick={() => handleViewAllDashboard()}
           disabled={fbLoading}
           style={{ maxWidth: 320, margin: '16px auto 0' }}
         >
@@ -615,7 +640,18 @@ export default function App() {
     <div className="dashboard">
       <header className="dash-header">
         <div className="dash-title">
-          <img src={dark ? logoFull : logoLight} alt="K-Lab" height={200} style={{ objectFit: 'contain' }} className="header-logo" />
+          <img
+            src={dark ? logoFull : logoLight}
+            alt="K-Lab — go to dashboard"
+            height={200}
+            style={{ objectFit: 'contain', cursor: 'pointer' }}
+            className="header-logo"
+            role="button"
+            tabIndex={0}
+            title="Go to dashboard (all sheets combined)"
+            onClick={() => handleViewAllDashboard()}
+            onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleViewAllDashboard() } }}
+          />
         </div>
         <div className="dash-meta">
           <span className="meta-badge">{filtered.length.toLocaleString()} records</span>
