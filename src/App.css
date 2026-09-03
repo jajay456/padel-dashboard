@@ -233,7 +233,7 @@ body {
   cursor: pointer; font-size: 13px; font-weight: 500;
   transition: all 0.15s; font-family: inherit;
 }
-.logout-btn:hover { border-color: var(--red); color: var(--green); }
+.logout-btn:hover { border-color: var(--green); color: var(--green); }
 
 /* ── Manage uploaded data (collapsible danger zone) ── */
 .manage-panel {
