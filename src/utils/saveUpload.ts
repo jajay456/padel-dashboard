@@ -9,7 +9,7 @@ export async function saveSheetUpload(
   tab: string,
   rows: RawRow[],
 ): Promise<void> {
-  await addDoc(collection(db, 'uploads'), {
+  const payload = {
     email,
     sheetId,
     sheetName,
@@ -17,7 +17,33 @@ export async function saveSheetUpload(
     rowCount: rows.length,
     rows,
     uploadedAt: serverTimestamp(),
-  })
+  }
+
+  // Firestore rejects any single document larger than ~1 MiB. Catch that early
+  // so the UI can say "this sheet has too many rows" instead of a raw error.
+  const approxBytes = new Blob([JSON.stringify(rows)]).size
+  if (approxBytes > 1_000_000) {
+    throw new Error(
+      `This tab has ${rows.length.toLocaleString()} rows (~${(approxBytes / 1_048_576).toFixed(1)} MB), ` +
+      'which is over the 1 MB per-upload limit. Split the sheet into smaller tabs and upload them one at a time.',
+    )
+  }
+
+  try {
+    await addDoc(collection(db, 'uploads'), payload)
+  } catch (e: any) {
+    const code: string | undefined = e?.code
+    if (code === 'permission-denied') {
+      throw new Error('Firestore denied the write (permission-denied). Check the "uploads" collection security rules.')
+    }
+    if (code === 'unavailable' || code === 'deadline-exceeded') {
+      throw new Error('Could not reach Firestore (network/offline). Check your connection and try again.')
+    }
+    if (code === 'invalid-argument') {
+      throw new Error('Firestore rejected the data (invalid-argument) — the upload is likely too large or has an unsupported value.')
+    }
+    throw new Error(e?.message ? `Firestore error: ${e.message}` : 'Failed to save upload to Firestore')
+  }
 }
 
 /** Every row from every upload record, across all sheets, combined into one array. */

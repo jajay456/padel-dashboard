@@ -14,6 +14,7 @@ import { loadGoogleSheet, getSheetTabs, downloadDriveFile } from './utils/loadGo
 import { openSheetPicker, appIdFromClientId, GOOGLE_SHEET_MIME } from './utils/loadPicker'
 import { loadLocalFile, parseWorkbookBuffer, ACCEPTED_FILE_ATTR, type LocalWorkbook } from './utils/loadLocalFile'
 import { getUserEmail, checkAuthorization } from './utils/checkAuthorization'
+import { loadToken, saveToken, clearToken } from './utils/authToken'
 import { saveSheetUpload, getAllUploadRows, deleteUploadsByDate, getUploadedSheets, deleteUploadsBySheet, type UploadedSheet } from './utils/saveUpload'
 import type { Filters, RawRow } from './types'
 import logoFull from './assets/Logo_full.png'
@@ -26,7 +27,12 @@ const APP_ID = appIdFromClientId(import.meta.env.VITE_GOOGLE_CLIENT_ID as string
 type AuthState = 'checking' | 'authorized' | 'unauthorized' | 'error'
 
 export default function App() {
-  const [accessToken, setAccessToken] = useState<string | null>(null)
+  const [accessToken, setAccessToken] = useState<string | null>(() => loadToken())
+
+  const handleLoginSuccess = useCallback((token: string, expiresIn: number) => {
+    saveToken(token, expiresIn)
+    setAccessToken(token)
+  }, [])
 
   const [authState, setAuthState] = useState<AuthState>('checking')
   const [authEmail, setAuthEmail] = useState('')
@@ -42,6 +48,7 @@ export default function App() {
   const [rows, setRows] = useState<RawRow[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [saveError, setSaveError] = useState('')
   const [filters, setFilters] = useState<Filters | null>(null)
   const [dark, setDark] = useState(false)
   const [dataSource, setDataSource] = useState<'sheet' | 'firebase' | 'local' | null>(null)
@@ -100,7 +107,12 @@ export default function App() {
         }
       })
       .catch(() => {
-        if (!cancelled) setAuthState('error')
+        if (cancelled) return
+        // Token is unusable (expired / revoked) — drop it so a refresh
+        // goes straight to the login screen instead of looping on this error.
+        clearToken()
+        setAccessToken(null)
+        setAuthState('error')
       })
 
     return () => { cancelled = true }
@@ -188,6 +200,7 @@ export default function App() {
     if (!values) return
     setLoading(true)
     setError('')
+    setSaveError('')
     ;(async () => {
       try {
         const parsed = parseSheetRows(values)
@@ -197,6 +210,7 @@ export default function App() {
           await saveSheetUpload(authEmail, localWb.fileId, localWb.fileName, selectedTab, parsed)
         } catch (e) {
           console.error('Failed to save upload to Firebase', e)
+          setSaveError(e instanceof Error ? e.message : 'Failed to save this upload to the database')
         }
 
         try {
@@ -218,6 +232,7 @@ export default function App() {
     if (!accessToken || !sheetId || !selectedTab || dataSource === 'firebase' || dataSource === 'local') return
     setLoading(true)
     setError('')
+    setSaveError('')
     loadGoogleSheet(accessToken, sheetId, selectedTab)
       .then(async values => {
         const parsed = parseSheetRows(values)
@@ -227,6 +242,7 @@ export default function App() {
           await saveSheetUpload(authEmail, sheetId, sheetName, selectedTab, parsed)
         } catch (e) {
           console.error('Failed to save upload to Firebase', e)
+          setSaveError(e instanceof Error ? e.message : 'Failed to save this upload to the database')
         }
 
         try {
@@ -314,6 +330,7 @@ export default function App() {
   }
 
   function handleLogout() {
+    clearToken()
     setAccessToken(null)
     setAuthState('checking')
     setAuthEmail('')
@@ -325,6 +342,7 @@ export default function App() {
     setRows([])
     setFilters(null)
     setError('')
+    setSaveError('')
     setDataSource(null)
     setFbError('')
     setLocalWb(null)
@@ -339,6 +357,7 @@ export default function App() {
     setRows([])
     setFilters(null)
     setError('')
+    setSaveError('')
     setDataSource(null)
     setFbError('')
     setLocalWb(null)
@@ -380,7 +399,7 @@ export default function App() {
   const handleReset = useCallback(() => setFilters(null), [])
 
   if (!accessToken) {
-    return <LoginPage onSuccess={setAccessToken} onError={setError} />
+    return <LoginPage onSuccess={handleLoginSuccess} onError={setError} />
   }
 
   // ส่วนของการ Render หน้าตา UI ด้านล่างคงเดิมทั้งหมด...
@@ -620,6 +639,15 @@ export default function App() {
       </header>
 
       <main className="dash-main">
+        {saveError && (
+          <div className="save-error-banner" role="alert">
+            <span>⚠️ Couldn't save this sheet to the database: {saveError}</span>
+            <span style={{ opacity: 0.75 }}>
+              The dashboard is showing only the sheet you just picked — it was not merged with previous uploads.
+            </span>
+            <button className="save-error-close" onClick={() => setSaveError('')} aria-label="Dismiss">×</button>
+          </div>
+        )}
         <FilterBar
           filters={activeFilters}
           allZones={zones}
