@@ -511,7 +511,7 @@ export default function App() {
         {pickerError && <p style={{ color: 'var(--red)', marginTop: 16 }}>{pickerError}</p>}
         {localError && <p style={{ color: 'var(--red)', marginTop: 16 }}>{localError}</p>}
         <button
-          className="logout-btn"
+          className="login-btn"
           onClick={() => handleViewAllDashboard()}
           disabled={fbLoading}
           style={{ maxWidth: 320, margin: '16px auto 0' }}
@@ -669,7 +669,7 @@ export default function App() {
             <span className="theme-toggle-icon moon">☾</span>
             <span className="theme-toggle-knob" />
           </button>
-          <button className="logout-btn" onClick={handleChangeSheet} title="Upload sheet">Upload sheet</button>
+          <button className="login-btn" onClick={handleChangeSheet} title="Upload sheet">Upload sheet</button>
           <button className="logout-btn" onClick={handleLogout}>Sign out</button>
         </div>
       </header>
