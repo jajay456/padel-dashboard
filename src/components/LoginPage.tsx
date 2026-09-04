@@ -2,7 +2,7 @@ import { useGoogleLogin } from '@react-oauth/google'
 import logoX from '../assets/Logo_X.png'
 
 interface Props {
-  onSuccess: (accessToken: string) => void
+  onSuccess: (accessToken: string, expiresIn: number) => void
   onError: (msg: string) => void
 }
 
@@ -12,7 +12,7 @@ export default function LoginPage({ onSuccess, onError }: Props) {
   // in App uses this token and returns 403 otherwise).
   const login = useGoogleLogin({
     scope: 'openid email profile https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/spreadsheets.readonly',
-    onSuccess: (resp) => onSuccess(resp.access_token),
+    onSuccess: (resp) => onSuccess(resp.access_token, resp.expires_in),
     onError: () => onError('Google login failed. Please try again.'),
   })
 

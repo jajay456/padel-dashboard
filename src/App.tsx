@@ -14,7 +14,12 @@ import { loadGoogleSheet, getSheetTabs, downloadDriveFile } from './utils/loadGo
 import { openSheetPicker, appIdFromClientId, GOOGLE_SHEET_MIME } from './utils/loadPicker'
 import { loadLocalFile, parseWorkbookBuffer, ACCEPTED_FILE_ATTR, type LocalWorkbook } from './utils/loadLocalFile'
 import { getUserEmail, checkAuthorization } from './utils/checkAuthorization'
+<<<<<<< HEAD
 import { upsertSheetUpload, getAllUploadRows, deleteUploadsByDate, getUploadedSheets, deleteUploadsBySheet, type UploadedSheet } from './utils/saveUpload'
+=======
+import { loadToken, saveToken, clearToken } from './utils/authToken'
+import { saveSheetUpload, getAllUploadRows, deleteUploadsByDate, getUploadedSheets, deleteUploadsBySheet, type UploadedSheet } from './utils/saveUpload'
+>>>>>>> ce01124f31e605865176154b630e237c1bf98020
 import type { Filters, RawRow } from './types'
 import logoFull from './assets/Logo_full.png'
 import logoLight from './assets/Logo_light.png'
@@ -27,7 +32,12 @@ const SHEET_SYNC_INTERVAL_MS = 5 * 60 * 1000
 type AuthState = 'checking' | 'authorized' | 'unauthorized' | 'error'
 
 export default function App() {
-  const [accessToken, setAccessToken] = useState<string | null>(null)
+  const [accessToken, setAccessToken] = useState<string | null>(() => loadToken())
+
+  const handleLoginSuccess = useCallback((token: string, expiresIn: number) => {
+    saveToken(token, expiresIn)
+    setAccessToken(token)
+  }, [])
 
   const [authState, setAuthState] = useState<AuthState>('checking')
   const [authEmail, setAuthEmail] = useState('')
@@ -43,6 +53,7 @@ export default function App() {
   const [rows, setRows] = useState<RawRow[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [saveError, setSaveError] = useState('')
   const [filters, setFilters] = useState<Filters | null>(null)
   const [dark, setDark] = useState(false)
   const [dataSource, setDataSource] = useState<'sheet' | 'firebase' | 'local' | null>(null)
@@ -105,7 +116,12 @@ export default function App() {
         }
       })
       .catch(() => {
-        if (!cancelled) setAuthState('error')
+        if (cancelled) return
+        // Token is unusable (expired / revoked) — drop it so a refresh
+        // goes straight to the login screen instead of looping on this error.
+        clearToken()
+        setAccessToken(null)
+        setAuthState('error')
       })
 
     return () => { cancelled = true }
@@ -193,6 +209,7 @@ export default function App() {
     if (!values) return
     setLoading(true)
     setError('')
+    setSaveError('')
     ;(async () => {
       try {
         const parsed = parseSheetRows(values)
@@ -202,6 +219,7 @@ export default function App() {
           await upsertSheetUpload(authEmail, localWb.fileId, localWb.fileName, selectedTab, parsed)
         } catch (e) {
           console.error('Failed to save upload to Firebase', e)
+          setSaveError(e instanceof Error ? e.message : 'Failed to save this upload to the database')
         }
 
         try {
@@ -219,6 +237,7 @@ export default function App() {
     })()
   }, [dataSource, localWb, selectedTab, authEmail])
 
+<<<<<<< HEAD
   const isLiveSheet =
     dataSource === null && !!sheetId && sheetId !== '__all__' && !!selectedTab
 
@@ -235,6 +254,24 @@ export default function App() {
       const values = await loadGoogleSheet(accessToken, sheetId, selectedTab)
       const parsed = parseSheetRows(values)
       if (parsed.length === 0) throw new Error('No data found in Sheet')
+=======
+  useEffect(() => {
+    if (!accessToken || !sheetId || !selectedTab || dataSource === 'firebase' || dataSource === 'local') return
+    setLoading(true)
+    setError('')
+    setSaveError('')
+    loadGoogleSheet(accessToken, sheetId, selectedTab)
+      .then(async values => {
+        const parsed = parseSheetRows(values)
+        if (parsed.length === 0) throw new Error('No data found in Sheet')
+
+        try {
+          await saveSheetUpload(authEmail, sheetId, sheetName, selectedTab, parsed)
+        } catch (e) {
+          console.error('Failed to save upload to Firebase', e)
+          setSaveError(e instanceof Error ? e.message : 'Failed to save this upload to the database')
+        }
+>>>>>>> ce01124f31e605865176154b630e237c1bf98020
 
       try {
         await upsertSheetUpload(authEmail, sheetId, sheetName, selectedTab, parsed)
@@ -260,6 +297,7 @@ export default function App() {
     }
   }, [accessToken, sheetId, sheetName, selectedTab, authEmail, dataSource])
 
+<<<<<<< HEAD
   // Initial load whenever the picked sheet / tab changes.
   useEffect(() => {
     if (!isLiveSheet) return
@@ -283,12 +321,17 @@ export default function App() {
   }, [isLiveSheet, syncFromGoogleSheet, lastSyncedAt])
 
   async function handleViewAllDashboard() {
+=======
+  const handleViewAllDashboard = useCallback(async (opts?: { silent?: boolean }) => {
+>>>>>>> ce01124f31e605865176154b630e237c1bf98020
     setFbError('')
     setFbLoading(true)
     try {
       const allRows = await getAllUploadRows()
       if (allRows.length === 0) {
-        setFbError('No previous uploads found in Firebase yet')
+        // On the automatic post-login load this just means "nothing uploaded
+        // yet" — fall through to the data-source picker without a scary error.
+        if (!opts?.silent) setFbError('No previous uploads found in Firebase yet')
         return
       }
       setDataSource('firebase')
@@ -297,12 +340,27 @@ export default function App() {
       setTabs(['All data'])
       setSelectedTab('All data')
       setRows(dedupeRows(allRows))
+      setFilters(null)
+      setError('')
+      setSaveError('')
+      setLocalWb(null)
     } catch (e) {
       setFbError(e instanceof Error ? e.message : 'Failed to load data from Firebase')
     } finally {
       setFbLoading(false)
     }
-  }
+  }, [])
+
+  // After sign-in the combined dashboard is the landing page: pull every
+  // uploaded row from Firebase automatically. Runs once per session; a page
+  // refresh re-runs it, so the dashboard is always the first screen when data
+  // exists. Falls through to "Choose a data source" only when nothing is stored.
+  const autoLoadedRef = useRef(false)
+  useEffect(() => {
+    if (authState !== 'authorized' || autoLoadedRef.current) return
+    autoLoadedRef.current = true
+    handleViewAllDashboard({ silent: true })
+  }, [authState, handleViewAllDashboard])
 
   async function handleDeleteUploads() {
     const year = parseInt(delYear, 10)
@@ -355,6 +413,7 @@ export default function App() {
   }
 
   function handleLogout() {
+    clearToken()
     setAccessToken(null)
     setAuthState('checking')
     setAuthEmail('')
@@ -366,6 +425,7 @@ export default function App() {
     setRows([])
     setFilters(null)
     setError('')
+    setSaveError('')
     setDataSource(null)
     setFbError('')
     setLocalWb(null)
@@ -382,6 +442,7 @@ export default function App() {
     setRows([])
     setFilters(null)
     setError('')
+    setSaveError('')
     setDataSource(null)
     setFbError('')
     setLocalWb(null)
@@ -425,7 +486,7 @@ export default function App() {
   const handleReset = useCallback(() => setFilters(null), [])
 
   if (!accessToken) {
-    return <LoginPage onSuccess={setAccessToken} onError={setError} />
+    return <LoginPage onSuccess={handleLoginSuccess} onError={setError} />
   }
 
   // ส่วนของการ Render หน้าตา UI ด้านล่างคงเดิมทั้งหมด...
@@ -468,6 +529,16 @@ export default function App() {
     )
   }
 
+  // Auto-loading the combined dashboard right after sign-in / refresh.
+  if (!sheetId && fbLoading) {
+    return (
+      <div className="loading-overlay">
+        <div className="spinner" />
+        <p>Loading dashboard...</p>
+      </div>
+    )
+  }
+
   if (!sheetId) {
     return (
       <div className="loading-overlay">
@@ -475,19 +546,6 @@ export default function App() {
         <p style={{ opacity: 0.6, marginBottom: 16 }}>
           Pick a Google Sheet — or a CSV / Excel file — from your Google Drive.
         </p>
-        <button className="google-btn" onClick={handlePickSheet} style={{ maxWidth: 320, margin: '0 auto' }}>
-          Browse Google Drive
-        </button>
-        <p style={{ opacity: 0.55, fontSize: 12, marginTop: 8 }}>
-          Google Sheets, plus CSV / TSV / Excel (.xlsx, .xls) / ODS files stored in Drive
-        </p>
-        {pickerError && <p style={{ color: 'var(--red)', marginTop: 16 }}>{pickerError}</p>}
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, maxWidth: 320, margin: '16px auto 0', opacity: 0.5 }}>
-          <span style={{ flex: 1, height: 1, background: 'currentColor' }} />
-          <span style={{ fontSize: 12 }}>or</span>
-          <span style={{ flex: 1, height: 1, background: 'currentColor' }} />
-        </div>
 
         <input
           ref={fileInputRef}
@@ -500,20 +558,31 @@ export default function App() {
             if (file) handlePickLocalFile(file)
           }}
         />
-        <button
-          className="google-btn"
-          onClick={() => fileInputRef.current?.click()}
-          style={{ maxWidth: 320, margin: '16px auto 0' }}
-        >
-          Upload from this device
-        </button>
-        <p style={{ opacity: 0.55, fontSize: 12, marginTop: 8 }}>
-          Supports CSV, TSV and Excel (.xlsx, .xls) files
-        </p>
+
+        <div className="source-btn-row">
+          <div className="source-btn-col">
+            <button className="google-btn" onClick={handlePickSheet}>
+              Browse Google Drive
+            </button>
+            <p className="source-btn-caption">
+              Google Sheets, plus CSV / TSV / Excel (.xlsx, .xls) / ODS files stored in Drive
+            </p>
+          </div>
+          <div className="source-btn-col">
+            <button className="google-btn" onClick={() => fileInputRef.current?.click()}>
+              Upload from this device
+            </button>
+            <p className="source-btn-caption">
+              Supports CSV, TSV and Excel (.xlsx, .xls) files
+            </p>
+          </div>
+        </div>
+
+        {pickerError && <p style={{ color: 'var(--red)', marginTop: 16 }}>{pickerError}</p>}
         {localError && <p style={{ color: 'var(--red)', marginTop: 16 }}>{localError}</p>}
         <button
-          className="logout-btn"
-          onClick={handleViewAllDashboard}
+          className="login-btn"
+          onClick={() => handleViewAllDashboard()}
           disabled={fbLoading}
           style={{ maxWidth: 320, margin: '16px auto 0' }}
         >
@@ -641,7 +710,18 @@ export default function App() {
     <div className="dashboard">
       <header className="dash-header">
         <div className="dash-title">
-          <img src={dark ? logoFull : logoLight} alt="K-Lab" height={200} style={{ objectFit: 'contain' }} className="header-logo" />
+          <img
+            src={dark ? logoFull : logoLight}
+            alt="K-Lab — go to dashboard"
+            height={200}
+            style={{ objectFit: 'contain', cursor: 'pointer' }}
+            className="header-logo"
+            role="button"
+            tabIndex={0}
+            title="Go to dashboard (all sheets combined)"
+            onClick={() => handleViewAllDashboard()}
+            onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleViewAllDashboard() } }}
+          />
         </div>
         <div className="dash-meta">
           <span className="meta-badge">{filtered.length.toLocaleString()} records</span>
@@ -678,12 +758,21 @@ export default function App() {
             <span className="theme-toggle-icon moon">☾</span>
             <span className="theme-toggle-knob" />
           </button>
-          <button className="logout-btn" onClick={handleChangeSheet} title="Upload sheet">Upload sheet</button>
+          <button className="login-btn" onClick={handleChangeSheet} title="Upload sheet">Upload sheet</button>
           <button className="logout-btn" onClick={handleLogout}>Sign out</button>
         </div>
       </header>
 
       <main className="dash-main">
+        {saveError && (
+          <div className="save-error-banner" role="alert">
+            <span>⚠️ Couldn't save this sheet to the database: {saveError}</span>
+            <span style={{ opacity: 0.75 }}>
+              The dashboard is showing only the sheet you just picked — it was not merged with previous uploads.
+            </span>
+            <button className="save-error-close" onClick={() => setSaveError('')} aria-label="Dismiss">×</button>
+          </div>
+        )}
         <FilterBar
           filters={activeFilters}
           allZones={zones}
