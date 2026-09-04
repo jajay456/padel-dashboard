@@ -7,21 +7,39 @@ const DOW_ORDER: Record<string, number> = {
 
 export function parseSheetRows(values: string[][]): RawRow[] {
   const [header, ...rows] = values
+  const col = {
+    date: header.indexOf('date'),
+    zone: header.indexOf('zone'),
+    club: header.indexOf('club'),
+    court_id: header.indexOf('court_id'),
+    booked_peak_h: header.indexOf('booked_peak_h'),
+    booked_offpeak_h: header.indexOf('booked_offpeak_h'),
+    booked_total_h: header.indexOf('booked_total_h'),
+    total_peak_h: header.indexOf('total_peak_h'),
+    total_offpeak_h: header.indexOf('total_offpeak_h'),
+    total_h: header.indexOf('total_h'),
+    day_of_week: header.indexOf('day_of_week'),
+  }
+  const cell = (r: string[], i: number) => (i >= 0 && i < r.length ? r[i] ?? '' : '')
+
   const parsed = rows
-    .filter(r => r.length >= 11)
+    // The Sheets API drops trailing empty cells, so a valid row whose last
+    // column (e.g. day_of_week) is blank comes back short. Don't discard those
+    // — only skip rows that are completely empty.
+    .filter(r => r.some(c => (c ?? '').toString().trim() !== ''))
     .map((r, i) => ({
       _rowIndex: i + 2, // row 1 = header, data starts at row 2
-      date: r[header.indexOf('date')],
-      zone: r[header.indexOf('zone')],
-      club: r[header.indexOf('club')],
-      court_id: r[header.indexOf('court_id')],
-      booked_peak_h: parseFloat(r[header.indexOf('booked_peak_h')]) || 0,
-      booked_offpeak_h: parseFloat(r[header.indexOf('booked_offpeak_h')]) || 0,
-      booked_total_h: parseFloat(r[header.indexOf('booked_total_h')]) || 0,
-      total_peak_h: parseFloat(r[header.indexOf('total_peak_h')]) || 0,
-      total_offpeak_h: parseFloat(r[header.indexOf('total_offpeak_h')]) || 0,
-      total_h: parseFloat(r[header.indexOf('total_h')]) || 0,
-      day_of_week: r[header.indexOf('day_of_week')],
+      date: cell(r, col.date),
+      zone: cell(r, col.zone),
+      club: cell(r, col.club),
+      court_id: cell(r, col.court_id),
+      booked_peak_h: parseFloat(cell(r, col.booked_peak_h)) || 0,
+      booked_offpeak_h: parseFloat(cell(r, col.booked_offpeak_h)) || 0,
+      booked_total_h: parseFloat(cell(r, col.booked_total_h)) || 0,
+      total_peak_h: parseFloat(cell(r, col.total_peak_h)) || 0,
+      total_offpeak_h: parseFloat(cell(r, col.total_offpeak_h)) || 0,
+      total_h: parseFloat(cell(r, col.total_h)) || 0,
+      day_of_week: cell(r, col.day_of_week),
     }))
   return dedupeRows(parsed)
 }
