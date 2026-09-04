@@ -1,4 +1,4 @@
-import { collection, setDoc, query, orderBy, where, getDocs, deleteDoc, doc, serverTimestamp, Timestamp } from 'firebase/firestore'
+import { collection, addDoc, query, orderBy, where, getDocs, deleteDoc, doc, serverTimestamp, Timestamp } from 'firebase/firestore'
 import { db } from '../firebase'
 import type { RawRow } from '../types'
 
@@ -7,22 +7,13 @@ import type { RawRow } from '../types'
 // rows. ~1.5k rows stays well under the limit even for wide rows.
 const ROWS_PER_CHUNK = 1500
 
-/** Firestore-safe deterministic id prefix for one (sheet, tab) pair. */
-function uploadDocId(sheetId: string, tab: string): string {
-  const raw = `${sheetId}::${tab}`
-  let hash = 5381
-  for (let i = 0; i < raw.length; i++) hash = ((hash << 5) + hash + raw.charCodeAt(i)) | 0
-  const safe = raw.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 180)
-  return `${safe}__${(hash >>> 0).toString(16)}`
-}
-
 /**
- * Writes the latest rows for a (sheet, tab) as a set of stable chunk
- * documents (`<id>__c0`, `<id>__c1`, …), replacing whatever was there before
- * so edits and deletions in the source sheet propagate instead of piling up
- * as new snapshots. Older records for the same sheet+tab — random-id docs
- * from earlier saves, or leftover chunks from a longer previous upload — are
- * removed in the same pass.
+ * Writes the latest rows for a (sheet, tab) as one or more chunk documents,
+ * then removes every older document for the same sheet+tab so edits and
+ * deletions in the source sheet propagate instead of piling up as new
+ * snapshots. Each chunk's `rowCount` is its own length (not the total) so it
+ * stays consistent with `rows` for security-rule validation; `totalRowCount`
+ * carries the full count.
  */
 export async function upsertSheetUpload(
   email: string,
@@ -31,32 +22,31 @@ export async function upsertSheetUpload(
   tab: string,
   rows: RawRow[],
 ): Promise<void> {
-  const id = uploadDocId(sheetId, tab)
   const chunkCount = Math.max(1, Math.ceil(rows.length / ROWS_PER_CHUNK))
 
-  const keep = new Set<string>()
+  const priorIds = (
+    await getDocs(
+      query(collection(db, 'uploads'), where('sheetId', '==', sheetId), where('tab', '==', tab)),
+    )
+  ).docs.map(d => d.id)
+
   for (let c = 0; c < chunkCount; c++) {
-    const docId = `${id}__c${c}`
-    keep.add(docId)
-    await setDoc(doc(db, 'uploads', docId), {
+    const chunk = rows.slice(c * ROWS_PER_CHUNK, (c + 1) * ROWS_PER_CHUNK)
+    await addDoc(collection(db, 'uploads'), {
       email,
       sheetId,
       sheetName,
       tab,
       chunkIndex: c,
       chunkCount,
-      rowCount: rows.length,
-      rows: rows.slice(c * ROWS_PER_CHUNK, (c + 1) * ROWS_PER_CHUNK),
+      totalRowCount: rows.length,
+      rowCount: chunk.length,
+      rows: chunk,
       uploadedAt: serverTimestamp(),
     })
   }
 
-  const existing = await getDocs(
-    query(collection(db, 'uploads'), where('sheetId', '==', sheetId), where('tab', '==', tab)),
-  )
-  await Promise.all(
-    existing.docs.filter(d => !keep.has(d.id)).map(d => deleteDoc(doc(db, 'uploads', d.id))),
-  )
+  await Promise.all(priorIds.map(id => deleteDoc(doc(db, 'uploads', id))))
 }
 
 /** Every row from every upload record, across all sheets, combined into one array. */
