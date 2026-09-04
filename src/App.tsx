@@ -14,7 +14,7 @@ import { loadGoogleSheet, getSheetTabs, downloadDriveFile } from './utils/loadGo
 import { openSheetPicker, appIdFromClientId, GOOGLE_SHEET_MIME } from './utils/loadPicker'
 import { loadLocalFile, parseWorkbookBuffer, ACCEPTED_FILE_ATTR, type LocalWorkbook } from './utils/loadLocalFile'
 import { getUserEmail, checkAuthorization } from './utils/checkAuthorization'
-import { saveSheetUpload, getAllUploadRows, deleteUploadsByDate, getUploadedSheets, deleteUploadsBySheet, type UploadedSheet } from './utils/saveUpload'
+import { upsertSheetUpload, getAllUploadRows, deleteUploadsByDate, getUploadedSheets, deleteUploadsBySheet, type UploadedSheet } from './utils/saveUpload'
 import type { Filters, RawRow } from './types'
 import logoFull from './assets/Logo_full.png'
 import logoLight from './assets/Logo_light.png'
@@ -22,6 +22,7 @@ import './App.css'
 
 const API_KEY = import.meta.env.VITE_GOOGLE_API_KEY as string
 const APP_ID = appIdFromClientId(import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined)
+const SHEET_SYNC_INTERVAL_MS = 5 * 60 * 1000
 
 type AuthState = 'checking' | 'authorized' | 'unauthorized' | 'error'
 
@@ -51,6 +52,10 @@ export default function App() {
   const [localWb, setLocalWb] = useState<LocalWorkbook | null>(null)
   const [localError, setLocalError] = useState('')
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const [syncing, setSyncing] = useState(false)
+  const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null)
+  const [syncError, setSyncError] = useState('')
 
   const [delYear, setDelYear] = useState(String(new Date().getFullYear()))
   const [delMonth, setDelMonth] = useState('')
@@ -194,7 +199,7 @@ export default function App() {
         if (parsed.length === 0) throw new Error('No usable rows found — check the column headers match the expected format')
 
         try {
-          await saveSheetUpload(authEmail, localWb.fileId, localWb.fileName, selectedTab, parsed)
+          await upsertSheetUpload(authEmail, localWb.fileId, localWb.fileName, selectedTab, parsed)
         } catch (e) {
           console.error('Failed to save upload to Firebase', e)
         }
@@ -214,32 +219,68 @@ export default function App() {
     })()
   }, [dataSource, localWb, selectedTab, authEmail])
 
-  useEffect(() => {
-    if (!accessToken || !sheetId || !selectedTab || dataSource === 'firebase' || dataSource === 'local') return
-    setLoading(true)
-    setError('')
-    loadGoogleSheet(accessToken, sheetId, selectedTab)
-      .then(async values => {
-        const parsed = parseSheetRows(values)
-        if (parsed.length === 0) throw new Error('No data found in Sheet')
+  const isLiveSheet =
+    dataSource === null && !!sheetId && sheetId !== '__all__' && !!selectedTab
 
-        try {
-          await saveSheetUpload(authEmail, sheetId, sheetName, selectedTab, parsed)
-        } catch (e) {
-          console.error('Failed to save upload to Firebase', e)
-        }
+  // Re-reads the picked Google Sheet, overwrites its snapshot in Firebase, and
+  // refreshes the dashboard. `silent` = a background poll (no full-screen
+  // spinner, failures don't blow away the current view).
+  const syncFromGoogleSheet = useCallback(async (opts?: { silent?: boolean }) => {
+    if (!accessToken || !sheetId || !selectedTab || sheetId === '__all__' || dataSource !== null) return
+    const silent = opts?.silent ?? false
+    if (silent) setSyncing(true)
+    else { setLoading(true); setError('') }
+    setSyncError('')
+    try {
+      const values = await loadGoogleSheet(accessToken, sheetId, selectedTab)
+      const parsed = parseSheetRows(values)
+      if (parsed.length === 0) throw new Error('No data found in Sheet')
 
-        try {
-          const allRows = await getAllUploadRows()
-          setRows(dedupeRows(allRows.length > 0 ? allRows : parsed))
-        } catch (e) {
-          console.error('Failed to load combined data from Firebase', e)
-          setRows(parsed)
-        }
-      })
-      .catch(e => setError(e instanceof Error ? e.message : 'Failed to load data'))
-      .finally(() => setLoading(false))
+      try {
+        await upsertSheetUpload(authEmail, sheetId, sheetName, selectedTab, parsed)
+      } catch (e) {
+        console.error('Failed to save upload to Firebase', e)
+      }
+
+      try {
+        const allRows = await getAllUploadRows()
+        setRows(dedupeRows(allRows.length > 0 ? allRows : parsed))
+      } catch (e) {
+        console.error('Failed to load combined data from Firebase', e)
+        setRows(parsed)
+      }
+      setLastSyncedAt(new Date())
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Failed to load data'
+      if (silent) setSyncError(msg)
+      else setError(msg)
+    } finally {
+      if (silent) setSyncing(false)
+      else setLoading(false)
+    }
   }, [accessToken, sheetId, sheetName, selectedTab, authEmail, dataSource])
+
+  // Initial load whenever the picked sheet / tab changes.
+  useEffect(() => {
+    if (!isLiveSheet) return
+    syncFromGoogleSheet({ silent: false })
+  }, [isLiveSheet, syncFromGoogleSheet])
+
+  // Auto-refresh while the dashboard is open: every few minutes and whenever
+  // the tab regains focus.
+  useEffect(() => {
+    if (!isLiveSheet) return
+    const tick = () => syncFromGoogleSheet({ silent: true })
+    const timer = window.setInterval(tick, SHEET_SYNC_INTERVAL_MS)
+    const onFocus = () => {
+      if (!lastSyncedAt || Date.now() - lastSyncedAt.getTime() > 60_000) tick()
+    }
+    window.addEventListener('focus', onFocus)
+    return () => {
+      window.clearInterval(timer)
+      window.removeEventListener('focus', onFocus)
+    }
+  }, [isLiveSheet, syncFromGoogleSheet, lastSyncedAt])
 
   async function handleViewAllDashboard() {
     setFbError('')
@@ -329,6 +370,8 @@ export default function App() {
     setFbError('')
     setLocalWb(null)
     setLocalError('')
+    setSyncError('')
+    setLastSyncedAt(null)
   }
 
   function handleChangeSheet() {
@@ -343,6 +386,8 @@ export default function App() {
     setFbError('')
     setLocalWb(null)
     setLocalError('')
+    setSyncError('')
+    setLastSyncedAt(null)
   }
 
   const { zones, clubs, dates } = useMemo(() => getUniqueValues(rows), [rows])
@@ -602,6 +647,25 @@ export default function App() {
           <span className="meta-badge">{filtered.length.toLocaleString()} records</span>
           <span className="meta-badge">{byClub.length} clubs</span>
           <span className="meta-badge">{byDay.length} days</span>
+          {isLiveSheet && (
+            <>
+              <button
+                className="logout-btn"
+                onClick={() => syncFromGoogleSheet({ silent: true })}
+                disabled={syncing || loading}
+                title="Re-read the Google Sheet now"
+              >
+                {syncing ? 'Syncing…' : '↻ Refresh'}
+              </button>
+              <span className="meta-badge" title={syncError || undefined} style={syncError ? { color: 'var(--red)' } : undefined}>
+                {syncError
+                  ? 'Sync failed'
+                  : lastSyncedAt
+                    ? `Synced ${lastSyncedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+                    : 'Auto-sync on'}
+              </span>
+            </>
+          )}
           <button
             className={`theme-toggle${dark ? ' dark' : ''}`}
             onClick={() => setDark(d => !d)}
