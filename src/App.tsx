@@ -15,6 +15,7 @@ import { openSheetPicker, appIdFromClientId, GOOGLE_SHEET_MIME } from './utils/l
 import { loadLocalFile, parseWorkbookBuffer, ACCEPTED_FILE_ATTR, type LocalWorkbook } from './utils/loadLocalFile'
 import { getUserEmail, checkAuthorization } from './utils/checkAuthorization'
 import { loadToken, saveToken, clearToken } from './utils/authToken'
+import { saveLastSheet, loadLastSheet, clearLastSheet } from './utils/lastSheet'
 import { upsertSheetUpload, getAllUploadRows, deleteUploadsByDate, getUploadedSheets, deleteUploadsBySheet, type UploadedSheet } from './utils/saveUpload'
 import type { Filters, RawRow } from './types'
 import logoFull from './assets/Logo_full.png'
@@ -168,6 +169,7 @@ export default function App() {
       const tabList = await getSheetTabs(accessToken, result.id)
       setTabs(tabList)
       setSelectedTab(tabList[0])
+      saveLastSheet({ sheetId: result.id, sheetName: result.name, tab: tabList[0] })
     } catch (e) {
       setPickerError(e instanceof Error ? e.message : 'Failed to open picker')
       setSheetId(null)
@@ -326,15 +328,31 @@ export default function App() {
     }
   }, [])
 
-  // After sign-in the combined dashboard is the landing page: pull every
-  // uploaded row from Firebase automatically. Runs once per session; a page
-  // refresh re-runs it, so the dashboard is always the first screen when data
-  // exists. Falls through to "Choose a data source" only when nothing is stored.
+  // Keep the "last sheet" pointer current while viewing a live Google Sheet,
+  // so switching tabs is remembered too.
+  useEffect(() => {
+    if (isLiveSheet && sheetId && selectedTab) {
+      saveLastSheet({ sheetId, sheetName, tab: selectedTab })
+    }
+  }, [isLiveSheet, sheetId, sheetName, selectedTab])
+
+  // On sign-in / refresh, go straight back to the last Google Sheet the user
+  // loaded and re-pull it fresh — no need to pick it from Drive again. If
+  // there's no remembered sheet, land on the combined Firebase dashboard
+  // instead. Runs once per session.
   const autoLoadedRef = useRef(false)
   useEffect(() => {
     if (authState !== 'authorized' || autoLoadedRef.current) return
     autoLoadedRef.current = true
-    handleViewAllDashboard({ silent: true })
+    const last = loadLastSheet()
+    if (last) {
+      setSheetId(last.sheetId)
+      setSheetName(last.sheetName)
+      setTabs([last.tab])
+      setSelectedTab(last.tab)
+    } else {
+      handleViewAllDashboard({ silent: true })
+    }
   }, [authState, handleViewAllDashboard])
 
   async function handleDeleteUploads() {
@@ -389,6 +407,7 @@ export default function App() {
 
   function handleLogout() {
     clearToken()
+    clearLastSheet()
     setAccessToken(null)
     setAuthState('checking')
     setAuthEmail('')
