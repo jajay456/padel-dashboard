@@ -14,12 +14,8 @@ import { loadGoogleSheet, getSheetTabs, downloadDriveFile } from './utils/loadGo
 import { openSheetPicker, appIdFromClientId, GOOGLE_SHEET_MIME } from './utils/loadPicker'
 import { loadLocalFile, parseWorkbookBuffer, ACCEPTED_FILE_ATTR, type LocalWorkbook } from './utils/loadLocalFile'
 import { getUserEmail, checkAuthorization } from './utils/checkAuthorization'
-<<<<<<< HEAD
-import { upsertSheetUpload, getAllUploadRows, deleteUploadsByDate, getUploadedSheets, deleteUploadsBySheet, type UploadedSheet } from './utils/saveUpload'
-=======
 import { loadToken, saveToken, clearToken } from './utils/authToken'
-import { saveSheetUpload, getAllUploadRows, deleteUploadsByDate, getUploadedSheets, deleteUploadsBySheet, type UploadedSheet } from './utils/saveUpload'
->>>>>>> ce01124f31e605865176154b630e237c1bf98020
+import { upsertSheetUpload, getAllUploadRows, deleteUploadsByDate, getUploadedSheets, deleteUploadsBySheet, type UploadedSheet } from './utils/saveUpload'
 import type { Filters, RawRow } from './types'
 import logoFull from './assets/Logo_full.png'
 import logoLight from './assets/Logo_light.png'
@@ -237,7 +233,6 @@ export default function App() {
     })()
   }, [dataSource, localWb, selectedTab, authEmail])
 
-<<<<<<< HEAD
   const isLiveSheet =
     dataSource === null && !!sheetId && sheetId !== '__all__' && !!selectedTab
 
@@ -250,33 +245,17 @@ export default function App() {
     if (silent) setSyncing(true)
     else { setLoading(true); setError('') }
     setSyncError('')
+    setSaveError('')
     try {
       const values = await loadGoogleSheet(accessToken, sheetId, selectedTab)
       const parsed = parseSheetRows(values)
       if (parsed.length === 0) throw new Error('No data found in Sheet')
-=======
-  useEffect(() => {
-    if (!accessToken || !sheetId || !selectedTab || dataSource === 'firebase' || dataSource === 'local') return
-    setLoading(true)
-    setError('')
-    setSaveError('')
-    loadGoogleSheet(accessToken, sheetId, selectedTab)
-      .then(async values => {
-        const parsed = parseSheetRows(values)
-        if (parsed.length === 0) throw new Error('No data found in Sheet')
-
-        try {
-          await saveSheetUpload(authEmail, sheetId, sheetName, selectedTab, parsed)
-        } catch (e) {
-          console.error('Failed to save upload to Firebase', e)
-          setSaveError(e instanceof Error ? e.message : 'Failed to save this upload to the database')
-        }
->>>>>>> ce01124f31e605865176154b630e237c1bf98020
 
       try {
         await upsertSheetUpload(authEmail, sheetId, sheetName, selectedTab, parsed)
       } catch (e) {
         console.error('Failed to save upload to Firebase', e)
+        setSaveError(e instanceof Error ? e.message : 'Failed to save this upload to the database')
       }
 
       try {
@@ -297,7 +276,6 @@ export default function App() {
     }
   }, [accessToken, sheetId, sheetName, selectedTab, authEmail, dataSource])
 
-<<<<<<< HEAD
   // Initial load whenever the picked sheet / tab changes.
   useEffect(() => {
     if (!isLiveSheet) return
@@ -320,10 +298,7 @@ export default function App() {
     }
   }, [isLiveSheet, syncFromGoogleSheet, lastSyncedAt])
 
-  async function handleViewAllDashboard() {
-=======
   const handleViewAllDashboard = useCallback(async (opts?: { silent?: boolean }) => {
->>>>>>> ce01124f31e605865176154b630e237c1bf98020
     setFbError('')
     setFbLoading(true)
     try {
