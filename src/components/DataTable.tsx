@@ -56,7 +56,7 @@ export default function DataTable({ data }: { data: ClubAggregate[] }) {
   return (
     <div className="table-card">
       <div className="chart-header">
-        <h3>Club Detail Table</h3>
+        <h3>Club detail</h3>
         <span className="chart-sub">{data.length} clubs</span>
       </div>
       <div className="table-wrap">
@@ -91,9 +91,9 @@ export default function DataTable({ data }: { data: ClubAggregate[] }) {
       </div>
       {totalPages > 1 && (
         <div className="pagination">
-          <button disabled={page === 0} onClick={() => setPage(p => p - 1)}>← Prev</button>
+          <button disabled={page === 0} onClick={() => setPage(p => p - 1)}>‹ Prev</button>
           <span>{page + 1} / {totalPages}</span>
-          <button disabled={page === totalPages - 1} onClick={() => setPage(p => p + 1)}>Next →</button>
+          <button disabled={page === totalPages - 1} onClick={() => setPage(p => p + 1)}>Next ›</button>
         </div>
       )}
     </div>

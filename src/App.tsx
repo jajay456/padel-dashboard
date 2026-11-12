@@ -9,11 +9,15 @@ import DayOfWeekChart from './components/DayOfWeekChart'
 import DataTable from './components/DataTable'
 import RawDataTable from './components/RawDataTable'
 import LoginPage from './components/LoginPage'
+import AdminUsers from './components/AdminUsers'
+import { SunIcon, MoonIcon, RefreshIcon, AlertIcon, HomeIcon, UsersIcon, UploadIcon, LogoutIcon } from './components/Icons'
 import { parseSheetRows, dedupeRows, applyFilters, aggregateByDay, aggregateByZone, aggregateByClub, aggregateByDayOfWeek, getKPIs, getUniqueValues, aggregateByDayPerKey } from './utils/dataProcessing'
 import { loadGoogleSheet, getSheetTabs, downloadDriveFile } from './utils/loadGoogleSheet'
 import { openSheetPicker, appIdFromClientId, GOOGLE_SHEET_MIME } from './utils/loadPicker'
 import { loadLocalFile, parseWorkbookBuffer, ACCEPTED_FILE_ATTR, type LocalWorkbook } from './utils/loadLocalFile'
-import { getUserEmail, checkAuthorization } from './utils/checkAuthorization'
+import { getUserProfile, checkAuthorization, type Role, type UserProfile } from './utils/checkAuthorization'
+import { signInFirebase, signOutFirebase } from './firebase'
+import { recordLogin, touchLastSeen, clearLoginSession, type LoginResult } from './utils/loginActivity'
 import { loadToken, saveToken, clearToken } from './utils/authToken'
 import { saveLastSheet, loadLastSheet, clearLastSheet } from './utils/lastSheet'
 import { upsertSheetUpload, getAllUploadRows, deleteUploadsByDate, getUploadedSheets, deleteUploadsBySheet, type UploadedSheet } from './utils/saveUpload'
@@ -27,6 +31,17 @@ const APP_ID = appIdFromClientId(import.meta.env.VITE_GOOGLE_CLIENT_ID as string
 const SHEET_SYNC_INTERVAL_MS = 5 * 60 * 1000
 
 type AuthState = 'checking' | 'authorized' | 'unauthorized' | 'error'
+type View = 'dashboard' | 'users'
+
+const THEME_KEY = 'klab.theme'
+function loadDark(): boolean {
+  try { return localStorage.getItem(THEME_KEY) !== 'light' } catch { return true }
+}
+
+function greeting(d = new Date()) {
+  const h = d.getHours()
+  return h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening'
+}
 
 export default function App() {
   const [accessToken, setAccessToken] = useState<string | null>(() => loadToken())
@@ -39,6 +54,12 @@ export default function App() {
   const [authState, setAuthState] = useState<AuthState>('checking')
   const [authEmail, setAuthEmail] = useState('')
   const [authReason, setAuthReason] = useState('')
+  const [authError, setAuthError] = useState('')
+  const [role, setRole] = useState<Role>('user')
+  const [profile, setProfile] = useState<UserProfile | null>(null)
+  const [view, setView] = useState<View>('dashboard')
+  const [menuOpen, setMenuOpen] = useState(false)
+  const isAdmin = authState === 'authorized' && role === 'admin'
 
   const [sheetId, setSheetId] = useState<string | null>(null)
   const [sheetName, setSheetName] = useState('')
@@ -52,7 +73,7 @@ export default function App() {
   const [error, setError] = useState('')
   const [saveError, setSaveError] = useState('')
   const [filters, setFilters] = useState<Filters | null>(null)
-  const [dark, setDark] = useState(false)
+  const [dark, setDark] = useState(loadDark)
   const [dataSource, setDataSource] = useState<'sheet' | 'firebase' | 'local' | null>(null)
   const [fbLoading, setFbLoading] = useState(false)
   const [fbError, setFbError] = useState('')
@@ -92,19 +113,67 @@ export default function App() {
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', dark)
+    try { localStorage.setItem(THEME_KEY, dark ? 'dark' : 'light') } catch { /* not persisted */ }
   }, [dark])
+
+  // Close the avatar menu on any outside click / Escape.
+  useEffect(() => {
+    if (!menuOpen) return
+    const close = (e: Event) => {
+      if (e instanceof KeyboardEvent && e.key !== 'Escape') return
+      if (e.target instanceof Element && e.target.closest('.avatar-menu-wrap')) return
+      setMenuOpen(false)
+    }
+    document.addEventListener('pointerdown', close)
+    document.addEventListener('keydown', close)
+    return () => {
+      document.removeEventListener('pointerdown', close)
+      document.removeEventListener('keydown', close)
+    }
+  }, [menuOpen])
 
   useEffect(() => {
     if (!accessToken) return
     let cancelled = false
     setAuthState('checking')
 
-    getUserEmail(accessToken)
-      .then(async (email) => {
+    getUserProfile(accessToken)
+      .then(async (prof) => {
         if (cancelled) return
-        setAuthEmail(email)
-        const result = await checkAuthorization(email)
+        setProfile(prof)
+        setAuthEmail(prof.email)
+        // Firestore rules key off the Firebase Auth identity, so sign in
+        // there before touching the customers collection. Non-fatal: with the
+        // old (anonymous) rules the dashboard still works; only admin actions
+        // need it, and they report the permission error themselves.
+        let firebaseAuthError = ''
+        try {
+          await signInFirebase(accessToken)
+        } catch (e) {
+          console.warn('Firebase Auth sign-in failed — is the Google provider enabled?', e)
+          firebaseAuthError = (e as { code?: string })?.code ?? (e instanceof Error ? e.message : String(e))
+        }
         if (cancelled) return
+        let result
+        try {
+          result = await checkAuthorization(prof.email)
+        } catch (e) {
+          // With the new rules deployed, a failed Firebase sign-in means the
+          // access check itself is refused; say why instead of a generic error.
+          if (firebaseAuthError && (e as { code?: string })?.code === 'permission-denied') {
+            throw new Error(
+              `Firebase sign-in failed (${firebaseAuthError}), so Firestore refused the access check. ` +
+              'An admin needs to enable the Google provider in Firebase Console → Authentication → Sign-in method.',
+              { cause: e },
+            )
+          }
+          throw e
+        }
+        if (cancelled) return
+        // Log every sign-in, including refused ones, so admins can see who
+        // tried to get in. Fire-and-forget: never blocks the dashboard.
+        recordLogin(result.email, (result.authorized ? 'ok' : result.reason ?? 'inactive') as LoginResult)
+        setRole(result.role)
         if (result.authorized) {
           setAuthState('authorized')
         } else {
@@ -112,8 +181,10 @@ export default function App() {
           setAuthState('unauthorized')
         }
       })
-      .catch(() => {
+      .catch((e) => {
         if (cancelled) return
+        console.error('Account verification failed', e)
+        setAuthError(e instanceof Error ? e.message : String(e))
         // Token is unusable (expired / revoked) — drop it so a refresh
         // goes straight to the login screen instead of looping on this error.
         clearToken()
@@ -123,6 +194,20 @@ export default function App() {
 
     return () => { cancelled = true }
   }, [accessToken])
+
+  // "Last active": refresh while the dashboard is open and whenever the tab
+  // comes back into focus (writes are throttled inside touchLastSeen).
+  useEffect(() => {
+    if (authState !== 'authorized' || !authEmail) return
+    const email = authEmail.trim().toLowerCase()
+    const touch = () => { if (document.visibilityState === 'visible') touchLastSeen(email) }
+    const timer = window.setInterval(touch, 5 * 60 * 1000)
+    window.addEventListener('focus', touch)
+    return () => {
+      window.clearInterval(timer)
+      window.removeEventListener('focus', touch)
+    }
+  }, [authState, authEmail])
 
   useEffect(() => {
     if (authState !== 'authorized') return
@@ -406,6 +491,12 @@ export default function App() {
   }
 
   function handleLogout() {
+    clearLoginSession()
+    signOutFirebase()
+    setRole('user')
+    setProfile(null)
+    setView('dashboard')
+    setMenuOpen(false)
     clearToken()
     clearLastSheet()
     setAccessToken(null)
@@ -479,6 +570,92 @@ export default function App() {
   const handleFilterChange = useCallback((f: Filters) => setFilters(f), [])
   const handleReset = useCallback(() => setFilters(null), [])
 
+  const displayName = profile?.givenName || profile?.name.split(' ')[0] || authEmail.split('@')[0]
+  const avatarText = (profile?.name || authEmail)
+    .split(/[\s@._-]+/).filter(Boolean).slice(0, 2).map(w => w[0]).join('').toUpperCase()
+
+  const renderHeader = () => (
+    <header className="topbar">
+      <span
+        className="header-logo"
+        role="button"
+        tabIndex={0}
+        title="Go to dashboard (all sheets combined)"
+        onClick={() => { setView('dashboard'); handleViewAllDashboard() }}
+        onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setView('dashboard'); handleViewAllDashboard() } }}
+      >
+        <img src={dark ? logoFull : logoLight} alt="K-Lab — go to dashboard" />
+      </span>
+
+      {isAdmin && (
+        <nav className="nav-pills" aria-label="Sections">
+          <button className={view === 'dashboard' ? 'active' : ''} aria-current={view === 'dashboard' ? 'page' : undefined} onClick={() => setView('dashboard')}>
+            <HomeIcon size={14} /> Dashboard
+          </button>
+          <button className={view === 'users' ? 'active' : ''} aria-current={view === 'users' ? 'page' : undefined} onClick={() => setView('users')}>
+            <UsersIcon size={14} /> Users
+          </button>
+        </nav>
+      )}
+
+      <div className="topbar-actions">
+        {isLiveSheet && view === 'dashboard' && (
+          <button
+            className="icon-btn round"
+            onClick={() => syncFromGoogleSheet({ silent: true })}
+            disabled={syncing || loading}
+            title={syncError ? `Sync failed: ${syncError}` : 'Re-read the Google Sheet now'}
+            aria-label="Refresh from Google Sheet"
+          >
+            <RefreshIcon className={syncing ? 'spin' : undefined} />
+          </button>
+        )}
+        <button
+          className="icon-btn round"
+          onClick={() => setDark(d => !d)}
+          title={dark ? 'Switch to light theme' : 'Switch to dark theme'}
+          aria-label="Toggle dark mode"
+        >
+          {dark ? <SunIcon size={15} /> : <MoonIcon size={14} />}
+        </button>
+        <button
+          className="icon-btn round"
+          onClick={() => { setView('dashboard'); handleChangeSheet() }}
+          title="Upload sheet"
+          aria-label="Upload sheet"
+        >
+          <UploadIcon size={15} />
+        </button>
+        <div className="avatar-menu-wrap">
+          <button
+            className="avatar-btn"
+            onClick={() => setMenuOpen(o => !o)}
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            aria-label="Account menu"
+          >
+            {profile?.picture
+              ? <img src={profile.picture} alt="" referrerPolicy="no-referrer" />
+              : avatarText}
+            <span className="avatar-online" />
+          </button>
+          {menuOpen && (
+            <div className="avatar-menu" role="menu">
+              <div className="avatar-menu-head">
+                <strong>{profile?.name || displayName}</strong>
+                <span>{authEmail}</span>
+                {isAdmin && <span className="role-tag">Admin</span>}
+              </div>
+              <button role="menuitem" onClick={handleLogout}>
+                <LogoutIcon size={14} /> Sign out
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    </header>
+  )
+
   if (!accessToken) {
     return <LoginPage onSuccess={handleLoginSuccess} onError={setError} />
   }
@@ -496,9 +673,10 @@ export default function App() {
   if (authState === 'error') {
     return (
       <div className="loading-overlay">
-        <p style={{ color: 'var(--red)', marginBottom: 16 }}>
+        <p style={{ color: 'var(--red)', marginBottom: 4 }}>
           Could not verify your account. Please try again.
         </p>
+        {authError && <p className="overlay-detail">{authError}</p>}
         <button className="logout-btn" onClick={handleLogout}>Sign out</button>
       </div>
     )
@@ -519,6 +697,23 @@ export default function App() {
           {messages[authReason] ?? messages.unauthorized}
         </p>
         <button className="logout-btn" onClick={handleLogout}>Sign out</button>
+      </div>
+    )
+  }
+
+  if (view === 'users' && isAdmin) {
+    return (
+      <div className="dashboard">
+        {renderHeader()}
+        <main className="dash-main">
+          <div className="page-head">
+            <div>
+              <h1>Users</h1>
+              <p>Approve sign-ups, set how long access lasts, and choose who can administer K-Lab.</p>
+            </div>
+          </div>
+          <AdminUsers adminEmail={authEmail} />
+        </main>
       </div>
     )
   }
@@ -583,6 +778,12 @@ export default function App() {
           {fbLoading ? 'Loading...' : 'View Dashboard (all sheets combined)'}
         </button>
         {fbError && <p style={{ color: 'var(--red)', marginTop: 16 }}>{fbError}</p>}
+
+        {isAdmin && (
+          <button className="login-btn" onClick={() => setView('users')} style={{ marginTop: 12 }}>
+            Manage users
+          </button>
+        )}
 
         <details className="manage-panel">
           <summary>Danger zone: delete uploaded data</summary>
@@ -702,65 +903,35 @@ export default function App() {
 
   return (
     <div className="dashboard">
-      <header className="dash-header">
-        <div className="dash-title">
-          <img
-            src={dark ? logoFull : logoLight}
-            alt="K-Lab — go to dashboard"
-            height={200}
-            style={{ objectFit: 'contain', cursor: 'pointer' }}
-            className="header-logo"
-            role="button"
-            tabIndex={0}
-            title="Go to dashboard (all sheets combined)"
-            onClick={() => handleViewAllDashboard()}
-            onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleViewAllDashboard() } }}
-          />
-        </div>
-        <div className="dash-meta">
-          <span className="meta-badge">{filtered.length.toLocaleString()} records</span>
-          <span className="meta-badge">{byClub.length} clubs</span>
-          <span className="meta-badge">{byDay.length} days</span>
-          {isLiveSheet && (
-            <>
-              <button
-                className="logout-btn"
-                onClick={() => syncFromGoogleSheet({ silent: true })}
-                disabled={syncing || loading}
-                title="Re-read the Google Sheet now"
-              >
-                {syncing ? 'Syncing…' : '↻ Refresh'}
-              </button>
-              <span className="meta-badge" title={syncError || undefined} style={syncError ? { color: 'var(--red)' } : undefined}>
-                {syncError
-                  ? 'Sync failed'
-                  : lastSyncedAt
-                    ? `Synced ${lastSyncedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
-                    : 'Auto-sync on'}
-              </span>
-            </>
-          )}
-          <button
-            className={`theme-toggle${dark ? ' dark' : ''}`}
-            onClick={() => setDark(d => !d)}
-            title="Toggle theme"
-            role="switch"
-            aria-checked={dark}
-            aria-label="Toggle dark mode"
-          >
-            <span className="theme-toggle-icon sun">☀</span>
-            <span className="theme-toggle-icon moon">☾</span>
-            <span className="theme-toggle-knob" />
-          </button>
-          <button className="login-btn" onClick={handleChangeSheet} title="Upload sheet">Upload sheet</button>
-          <button className="logout-btn" onClick={handleLogout}>Sign out</button>
-        </div>
-      </header>
+      {renderHeader()}
 
       <main className="dash-main">
+        <div className="page-head">
+          <div>
+            <h1>{greeting()}, {displayName}</h1>
+            <p>Here's how your courts are filling up{sheetName ? <> · <span className="page-head-src">{sheetName}</span></> : null}</p>
+          </div>
+          <div className="dash-meta">
+            <span className="meta-badge"><strong>{filtered.length.toLocaleString()}</strong> records</span>
+            <span className="meta-badge"><strong>{byClub.length}</strong> clubs</span>
+            <span className="meta-badge"><strong>{byDay.length}</strong> days</span>
+            {isLiveSheet && (
+              <span className={`meta-badge sync-badge${syncError ? ' is-error' : ''}`} title={syncError || undefined}>
+                <span className="sync-dot" />
+                {syncError
+                  ? 'Sync failed'
+                  : syncing
+                    ? 'Syncing…'
+                    : lastSyncedAt
+                      ? `Synced ${lastSyncedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+                      : 'Auto-sync on'}
+              </span>
+            )}
+          </div>
+        </div>
         {saveError && (
           <div className="save-error-banner" role="alert">
-            <span>⚠️ Couldn't save this sheet to the database: {saveError}</span>
+            <span className="save-error-title"><AlertIcon /> Couldn't save this sheet to the database: {saveError}</span>
             <span style={{ opacity: 0.75 }}>
               The dashboard is showing only the sheet you just picked — it was not merged with previous uploads.
             </span>

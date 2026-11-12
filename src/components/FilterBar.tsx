@@ -1,4 +1,6 @@
+import { useState } from 'react'
 import type { Filters } from '../types'
+import DatePicker from './DatePicker'
 
 interface Props {
   filters: Filters
@@ -33,8 +35,13 @@ export default function FilterBar({ filters, allZones, allClubs, minDate, maxDat
   const hasFilters = filters.zones.length > 0 || filters.clubs.length > 0
     || filters.dateStart !== minDate || filters.dateEnd !== maxDate
 
+  // Phones only: zone/club chips sit behind a toggle so they don't push the
+  // whole dashboard below the fold. Desktop always shows them (see App.css).
+  const [open, setOpen] = useState(false)
+  const selCount = filters.zones.length + filters.clubs.length
+
   return (
-    <div className="filter-bar">
+    <div className={`filter-bar${open ? ' open' : ''}`}>
       <div className="filter-row">
         <div className="filter-group">
           <label className="filter-label">Date Range</label>
@@ -42,32 +49,32 @@ export default function FilterBar({ filters, allZones, allClubs, minDate, maxDat
             {/* Every day is selectable — no min/max cap. The range defaults to
                 the full span of the data; pick the start (and end) yourself.
                 If the range ends up reversed, the other end follows along. */}
-            <input
-              type="date"
+            <DatePicker
               value={filters.dateStart}
-              onChange={e => {
-                const dateStart = e.target.value
-                if (!dateStart) return
-                onChange({
-                  ...filters,
-                  dateStart,
-                  dateEnd: dateStart > filters.dateEnd ? dateStart : filters.dateEnd,
-                })
-              }}
+              ariaLabel="Start date"
+              rangeStart={filters.dateStart}
+              rangeEnd={filters.dateEnd}
+              hintMin={minDate}
+              hintMax={maxDate}
+              onChange={dateStart => onChange({
+                ...filters,
+                dateStart,
+                dateEnd: dateStart > filters.dateEnd ? dateStart : filters.dateEnd,
+              })}
             />
-            <span className="date-sep">→</span>
-            <input
-              type="date"
+            <span className="date-sep" aria-hidden="true">–</span>
+            <DatePicker
               value={filters.dateEnd}
-              onChange={e => {
-                const dateEnd = e.target.value
-                if (!dateEnd) return
-                onChange({
-                  ...filters,
-                  dateEnd,
-                  dateStart: dateEnd < filters.dateStart ? dateEnd : filters.dateStart,
-                })
-              }}
+              ariaLabel="End date"
+              rangeStart={filters.dateStart}
+              rangeEnd={filters.dateEnd}
+              hintMin={minDate}
+              hintMax={maxDate}
+              onChange={dateEnd => onChange({
+                ...filters,
+                dateEnd,
+                dateStart: dateEnd < filters.dateStart ? dateEnd : filters.dateStart,
+              })}
             />
             {(minDate || maxDate) && (
               <button
@@ -87,41 +94,59 @@ export default function FilterBar({ filters, allZones, allClubs, minDate, maxDat
         </div>
         {hasFilters && (
           <button className="reset-btn" onClick={onReset}>
-            Reset Filters
+            Reset filters
           </button>
         )}
       </div>
 
-      <div className="filter-row">
-        <div className="filter-group">
-          <label className="filter-label">Zone {filters.zones.length > 0 && <span className="filter-count">{filters.zones.length}</span>}</label>
-          <div className="chip-group">
-            {allZones.map(z => (
-              <button
-                key={z}
-                className={`chip ${filters.zones.includes(z) ? 'chip-active' : ''}`}
-                onClick={() => toggleZone(z)}
-              >
-                {z}
-              </button>
-            ))}
+      <button
+        type="button"
+        className="filter-toggle"
+        aria-expanded={open}
+        onClick={() => setOpen(o => !o)}
+      >
+        <span>Zones &amp; clubs</span>
+        <span className="filter-toggle-meta">
+          {selCount > 0 ? `${selCount} selected` : 'All'}
+          <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" className="filter-toggle-chev">
+            <path d="M2.5 4.5 6 8l3.5-3.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </span>
+      </button>
+
+      <div className="filter-collapsible">
+
+        <div className="filter-row">
+          <div className="filter-group">
+            <label className="filter-label">Zone {filters.zones.length > 0 && <span className="filter-count">{filters.zones.length}</span>}</label>
+            <div className="chip-group">
+              {allZones.map(z => (
+                <button
+                  key={z}
+                  className={`chip ${filters.zones.includes(z) ? 'chip-active' : ''}`}
+                  onClick={() => toggleZone(z)}
+                >
+                  {z}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
-      </div>
 
-      <div className="filter-row">
-        <div className="filter-group">
-          <label className="filter-label">Club {filters.clubs.length > 0 && <span className="filter-count">{filters.clubs.length}</span>}</label>
-          <div className="chip-group">
-            {visibleClubs.map(c => (
-              <button
-                key={c}
-                className={`chip ${filters.clubs.includes(c) ? 'chip-active' : ''}`}
-                onClick={() => toggleClub(c)}
-              >
-                {c}
-              </button>
-            ))}
+        <div className="filter-row">
+          <div className="filter-group">
+            <label className="filter-label">Club {filters.clubs.length > 0 && <span className="filter-count">{filters.clubs.length}</span>}</label>
+            <div className="chip-group">
+              {visibleClubs.map(c => (
+                <button
+                  key={c}
+                  className={`chip ${filters.clubs.includes(c) ? 'chip-active' : ''}`}
+                  onClick={() => toggleClub(c)}
+                >
+                  {c}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       </div>

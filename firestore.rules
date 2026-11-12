@@ -1,0 +1,126 @@
+rules_version = '2';
+
+// Complete rule set for the app: customers, loginEvents and uploads.
+// Paste the whole file into Firebase Console → Firestore → Rules → Publish
+// (or `firebase deploy --only firestore:rules`). Anything not matched here
+// is denied.
+//
+// Requires Firebase Auth (Google provider). The app signs in with the
+// user's Google token, see signInFirebase() in src/firebase.ts.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null
+        && request.auth.token.email != null
+        && request.auth.token.email_verified == true;
+    }
+
+    function myEmail() {
+      return request.auth.token.email.lower();
+    }
+
+    function myCustomerDoc() {
+      return /databases/$(database)/documents/customers/$(myEmail());
+    }
+
+    // Admin = an active customer doc with role "admin". Read server-side,
+    // so editing the client cannot grant it.
+    function isAdmin() {
+      return signedIn()
+        && exists(myCustomerDoc())
+        && get(myCustomerDoc()).data.get('role', 'user') == 'admin'
+        && get(myCustomerDoc()).data.get('active', false) == true;
+    }
+
+    // A user touching only their own activity fields: timestamps must be the
+    // server's clock and the counter can only go up by one.
+    function isOwnActivityUpdate(email) {
+      let changed = request.resource.data.diff(resource.data).affectedKeys();
+      return signedIn()
+        && email == myEmail()
+        && changed.hasOnly(['lastLoginAt', 'lastSeenAt', 'loginCount'])
+        && (!changed.hasAny(['lastLoginAt']) || request.resource.data.lastLoginAt == request.time)
+        && (!changed.hasAny(['lastSeenAt']) || request.resource.data.lastSeenAt == request.time)
+        && (!changed.hasAny(['loginCount'])
+            || request.resource.data.loginCount == resource.data.get('loginCount', 0) + 1);
+    }
+
+    match /customers/{email} {
+      // Everyone can read their own record (for the access check); admins can
+      // read and list everyone.
+      allow get: if signedIn() && (email == myEmail() || isAdmin());
+      allow list: if isAdmin();
+
+      // First sign-in registers a pending record for yourself only. It must
+      // be inactive and cannot carry a role, so nobody can self-approve.
+      allow create: if signedIn()
+        && email == myEmail()
+        && request.resource.data.keys().hasOnly(['active', 'createdAt'])
+        && request.resource.data.active == false;
+
+      // Only admins change records, and only these fields.
+      allow update: if isAdmin()
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['active', 'role', 'expiresAt', 'plan', 'updatedAt', 'updatedBy'])
+        && request.resource.data.get('role', 'user') in ['user', 'admin']
+        && request.resource.data.get('updatedBy', '') == myEmail()
+        // An admin can't lock themselves out (deactivate or demote self).
+        && (email != myEmail()
+            || (request.resource.data.get('role', 'user') == 'admin'
+                && request.resource.data.get('active', false) == true));
+
+      // Sign-in bookkeeping (lastLoginAt / lastSeenAt / loginCount).
+      allow update: if isOwnActivityUpdate(email);
+
+      allow delete: if isAdmin() && email != myEmail();
+    }
+
+    // Sign-in history: anyone signed in can append their own entry (stamped
+    // with server time); only admins can read or prune it. Entries are never
+    // edited.
+    match /loginEvents/{id} {
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['email', 'at', 'result', 'userAgent'])
+        && request.resource.data.email == myEmail()
+        && request.resource.data.at == request.time
+        && request.resource.data.result in ['ok', 'pending', 'inactive', 'expired']
+        && request.resource.data.userAgent is string
+        && request.resource.data.userAgent.size() <= 400;
+      allow read, delete: if isAdmin();
+    }
+
+    // Member = approved customer whose access hasn't expired.
+    function isMember() {
+      return signedIn()
+        && exists(myCustomerDoc())
+        && get(myCustomerDoc()).data.get('active', false) == true
+        && (get(myCustomerDoc()).data.get('expiresAt', null) == null
+            || get(myCustomerDoc()).data.expiresAt > request.time);
+    }
+
+    // Uploaded sheet data, stored in chunks (see src/utils/saveUpload.ts).
+    // Members can read everything (the dashboard combines all sheets).
+    // Chunks are create-only: re-syncing a sheet writes new chunks and then
+    // deletes the old ones, so members can also delete.
+    match /uploads/{id} {
+      allow read: if isMember();
+
+      allow create: if isMember()
+        && request.resource.data.keys().hasOnly([
+             'email', 'sheetId', 'sheetName', 'tab', 'chunkIndex', 'chunkCount',
+             'totalRowCount', 'rowCount', 'rows', 'uploadedAt'])
+        && request.resource.data.email is string
+        && request.resource.data.email.lower() == myEmail()
+        && request.resource.data.sheetId is string
+        && request.resource.data.tab is string
+        && request.resource.data.rows is list
+        && request.resource.data.rowCount == request.resource.data.rows.size()
+        && request.resource.data.chunkIndex is int
+        && request.resource.data.uploadedAt == request.time;
+
+      allow delete: if isMember();
+    }
+  }
+}

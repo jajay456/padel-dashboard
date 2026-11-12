@@ -24,13 +24,13 @@ export default function RawDataTable({ rows }: Props) {
 
   return (
     <div className="table-card">
-      <div className="chart-header" style={{ justifyContent: 'space-between' }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
+      <div className="chart-header chart-header-split">
+        <div className="chart-title">
           <h3>Raw Data</h3>
           <span className="chart-sub">{filtered.length} rows</span>
         </div>
         <input
-          type="text"
+          type="search"
           placeholder="Search club, zone, date..."
           value={search}
           onChange={e => { setSearch(e.target.value); setPage(0) }}
@@ -71,9 +71,9 @@ export default function RawDataTable({ rows }: Props) {
 
       {totalPages > 1 && (
         <div className="pagination">
-          <button disabled={page === 0} onClick={() => setPage(p => p - 1)}>← Prev</button>
+          <button disabled={page === 0} onClick={() => setPage(p => p - 1)}>‹ Prev</button>
           <span>{page + 1} / {totalPages}</span>
-          <button disabled={page === totalPages - 1} onClick={() => setPage(p => p + 1)}>Next →</button>
+          <button disabled={page === totalPages - 1} onClick={() => setPage(p => p + 1)}>Next ›</button>
         </div>
       )}
     </div>
