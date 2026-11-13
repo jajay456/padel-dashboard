@@ -212,6 +212,13 @@ body::after {
 }
 
 .login-note { margin-top: 16px; color: var(--text-3); font-size: 12px; }
+.login-error {
+  margin-top: 16px; padding: 10px 14px;
+  border-radius: var(--radius-xs);
+  background: var(--red-bg); color: var(--red-text);
+  font-size: 13px; font-weight: 500; text-align: left;
+  overflow-wrap: anywhere;
+}
 
 /* ── Choose-a-data-source: the two upload buttons sit side by side ── */
 .source-btn-row {

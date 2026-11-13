@@ -46,7 +46,11 @@ function greeting(d = new Date()) {
 export default function App() {
   const [accessToken, setAccessToken] = useState<string | null>(() => loadToken())
 
+  // Why the last sign-in attempt failed; shown on the login page.
+  const [authError, setAuthError] = useState('')
+
   const handleLoginSuccess = useCallback((token: string, expiresIn: number) => {
+    setAuthError('')
     saveToken(token, expiresIn)
     setAccessToken(token)
   }, [])
@@ -54,7 +58,6 @@ export default function App() {
   const [authState, setAuthState] = useState<AuthState>('checking')
   const [authEmail, setAuthEmail] = useState('')
   const [authReason, setAuthReason] = useState('')
-  const [authError, setAuthError] = useState('')
   const [role, setRole] = useState<Role>('user')
   const [profile, setProfile] = useState<UserProfile | null>(null)
   const [view, setView] = useState<View>('dashboard')
@@ -161,9 +164,15 @@ export default function App() {
           // With the new rules deployed, a failed Firebase sign-in means the
           // access check itself is refused; say why instead of a generic error.
           if (firebaseAuthError && (e as { code?: string })?.code === 'permission-denied') {
+            const fix = firebaseAuthError === 'auth/invalid-credential'
+              // "access_token audience is not for this project": the Google
+              // OAuth client belongs to another Google Cloud project.
+              ? 'The Google OAuth client (VITE_GOOGLE_CLIENT_ID) is from a different project. An admin needs to add it under Firebase Console → Authentication → Sign-in method → Google → Safelist client IDs from external projects.'
+              : firebaseAuthError === 'auth/operation-not-allowed'
+                ? 'An admin needs to enable the Google provider in Firebase Console → Authentication → Sign-in method.'
+                : 'Check the Google provider settings in Firebase Console → Authentication → Sign-in method.'
             throw new Error(
-              `Firebase sign-in failed (${firebaseAuthError}), so Firestore refused the access check. ` +
-              'An admin needs to enable the Google provider in Firebase Console → Authentication → Sign-in method.',
+              `Firebase sign-in failed (${firebaseAuthError}), so Firestore refused the access check. ${fix}`,
               { cause: e },
             )
           }
@@ -491,6 +500,7 @@ export default function App() {
   }
 
   function handleLogout() {
+    setAuthError('')
     clearLoginSession()
     signOutFirebase()
     setRole('user')
@@ -657,7 +667,9 @@ export default function App() {
   )
 
   if (!accessToken) {
-    return <LoginPage onSuccess={handleLoginSuccess} onError={setError} />
+    // authError is set when the access check after Google sign-in failed
+    // (the token is dropped, so we land back here and must say why).
+    return <LoginPage onSuccess={handleLoginSuccess} onError={setAuthError} message={authError} />
   }
 
   // ส่วนของการ Render หน้าตา UI ด้านล่างคงเดิมทั้งหมด...

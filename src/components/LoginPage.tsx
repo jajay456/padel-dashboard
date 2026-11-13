@@ -4,16 +4,22 @@ import logoX from '../assets/Logo_X.png'
 interface Props {
   onSuccess: (accessToken: string, expiresIn: number) => void
   onError: (msg: string) => void
+  /** Why the last sign-in attempt failed, shown under the button. */
+  message?: string
 }
 
-export default function LoginPage({ onSuccess, onError }: Props) {
+export default function LoginPage({ onSuccess, onError, message }: Props) {
   // Access is controlled by Google Sheet sharing: anyone can sign in, but
   // only users the sheet is shared with can load data (the Sheets API call
   // in App uses this token and returns 403 otherwise).
   const login = useGoogleLogin({
     scope: 'openid email profile https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/spreadsheets.readonly',
     onSuccess: (resp) => onSuccess(resp.access_token, resp.expires_in),
-    onError: () => onError('Google login failed. Please try again.'),
+    onError: (r) => onError(`Google sign-in failed: ${r.error_description || r.error || 'unknown error'}`),
+    onNonOAuthError: (e) => {
+      // Popup closed by the user isn't an error worth showing.
+      if (e.type !== 'popup_closed') onError(`Google sign-in failed: ${e.type}`)
+    },
   })
 
   return (
@@ -35,6 +41,9 @@ export default function LoginPage({ onSuccess, onError }: Props) {
           </svg>
           Sign in with Google
         </button>
+        {message && (
+          <p className="login-error" role="alert">{message}</p>
+        )}
         <p className="login-note">
           Requires access to your Google Drive (to select a sheet) and Sheets (read-only)
         </p>
